@@ -25,12 +25,11 @@ QtObject {
     readonly property int defaultWidth: 1080
     readonly property int defaultHeight: 720
 
-    property real uiScale: 1.0   // user setting, fed from main.qml
+    property real uiScale: 1.0
 
     // Quick Controls styles apply their own default font, so controls have to name the app's.
     readonly property string fontFamily: Application.font.family
 
-    // The UI Scale setting is the single knob; text does not track window size.
     function sp(n) {
         return Math.round(n * uiScale)
     }

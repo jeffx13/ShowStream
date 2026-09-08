@@ -11,7 +11,6 @@
 #include "providers/showdata.h"
 #include <qqmlintegration.h>
 
-// A gadget so QML can read a whole row; roleNames() exposes only what the grid draws.
 struct LibraryEntry {
     Q_GADGET
     QML_ANONYMOUS
@@ -109,7 +108,7 @@ public:
 signals:
     void fetchedAllEpCounts();
     void libraryTypeChanged();
-    void libraryChanged();   // add/remove/type - drives badges outside the current view
+    void libraryChanged();
     void historyChanged();
 
 private:
@@ -118,7 +117,6 @@ private:
     int indexOf(const QString &link) const;
     QString linkAtIndex(int index, int libraryType) const;
 
-    // In-memory snapshot of the displayed library_type; the model reads rows from here, not SQL.
     void refreshDisplayCache();
     static LibraryEntry entryFromQuery(const QSqlQuery &query);
     QList<LibraryEntry> m_displayCache;
@@ -135,6 +133,6 @@ private:
 
     struct HistoryMeta { QString title, cover, provider; int total = 0; };
     QHash<QString, HistoryMeta> m_historyMeta;   // link -> display metadata, populated at show load
-    double m_watchedFraction = 0.8;              // mirrors the setting; re-read when it changes
+    double m_watchedFraction = 0.8;
     CancelToken m_cancel;
 };

@@ -72,7 +72,6 @@ inline QString episodeSub(const QString &episodeLink) {
     return QStringLiteral("subtitles/ep") + QString::number(qHash(episodeLink));
 }
 
-// Remembers a manual AniSkip match when the automatic one was wrong.
 inline QString skipMal(const QString &showLink) {
     return QStringLiteral("skipmal/") + QString::number(qHash(showLink));
 }

@@ -62,7 +62,6 @@ private:
     QList<Entry> m_entries;
 };
 
-// Stream-style logger: the first field is the source label, the rest is the message.
 class QLog {
 public:
     enum Colour { Red = 31, Green = 32, Orange = 33, Magenta = 35, Cyan = 36, Yellow = 93 };
@@ -114,7 +113,6 @@ public:
 private:
     static constexpr int kLabelWidth = 14;
 
-    // <exe-dir>/aonami.log, truncated each run.
     static void writeToFile(const QString &type, const QString &message) {
         static QMutex mutex;
         static QFile file;

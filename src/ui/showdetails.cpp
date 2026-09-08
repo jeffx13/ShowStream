@@ -122,7 +122,6 @@ void ShowDetails::load(ShowData show, ShowData::WatchState watchState, bool navi
 
     bool shouldReverse = false;
     if (usingExistingPlaylist) {
-        // Reuse Playlist's item - it already tracks watch state.
         shouldReverse = list->currentIndex() > 0;
         show.setPlaylist(list);
     } else if (list && list->isValidIndex(watchState.lastWatchedIndex)) {

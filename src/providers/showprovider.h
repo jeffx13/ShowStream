@@ -53,7 +53,6 @@ public:
 protected:
     virtual int loadShow(Client *client, ShowData &show, LoadParts parts) const = 0;
 
-    // Providers call this from extractSource once they know the episode's key.
     bool attachDanmaku(PlayInfo &info, QList<DanmakuComment> comments, const QString &cacheKey) const;
 
 private:

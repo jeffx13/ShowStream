@@ -127,7 +127,7 @@ public:
     void useExternalSubtitle(const QString &path, const QString &title,
                                          const QString &lang, bool secondary = false);
     void setHeaders(const QMap<QString, QString> &headers);
-    void setShowKey(const QString &key) { m_showKey = key; }   // per-show sub/audio memory
+    void setShowKey(const QString &key) { m_showKey = key; }
     void setEpisodeKey(const QString &key) { m_episodeKey = key; }
     void setSkipOP(bool skip);
     void setSkipED(bool skip);

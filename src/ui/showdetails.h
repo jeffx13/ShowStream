@@ -81,7 +81,6 @@ private:
     int                      m_continueIndex = -1;
     QString                  m_continueText;
 
-    // Pending request stored when setShow is called mid-load; applied in onLoadFinished.
     ShowData                 m_pendingShow;
     ShowData::WatchState  m_pendingInfo;
     bool                     m_pendingNavigate = true;

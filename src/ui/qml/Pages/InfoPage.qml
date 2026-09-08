@@ -16,7 +16,6 @@ Item {
         cursorShape: Qt.ArrowCursor
     }
 
-    // `pill` rounds it fully for metadata; square-ish reads as a date.
     component MetaChip: Rectangle {
         id: chip
         property string iconName
@@ -805,7 +804,6 @@ Item {
         padding: 0
         closePolicy: Popup.CloseOnEscape | Popup.CloseOnPressOutside
         anchors.centerIn: parent
-        // Match the poster aspect so there are no empty margins; the dimmed scrim is the only backdrop.
         height: Math.min(Globals.appHeight > 0 ? Globals.appHeight * 0.85 : 880, 880)
         width: height * 0.705
         Overlay.modal: Rectangle { color: Theme.scrim }

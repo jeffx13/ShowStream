@@ -10,7 +10,6 @@
 class PlaylistItem;
 class Client;
 
-// Resolves the title to a MAL match, fetches OP/ED times, applies them to mpv. The match persists per show.
 class SkipTimes : public QObject {
     Q_OBJECT
     QML_ANONYMOUS
@@ -81,7 +80,7 @@ private:
 
     void loadProfile(const QString &showLink);
     void saveProfile();
-    void loadFallback();   // global manual default OP/ED values
+    void loadFallback();
     void saveFallback();
 
     QString m_showTitle, m_showLink;
@@ -98,7 +97,7 @@ private:
     int              m_selectedEpisodeIndex = -1;
     QString          m_status;
     bool             m_busy = false;
-    QString          m_introRange, m_outroRange;   // formatted AniSkip results
+    QString          m_introRange, m_outroRange;
 
     bool m_connected = false;
     bool m_applying  = false;   // suppress profile save during programmatic apply

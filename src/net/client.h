@@ -23,7 +23,6 @@ public:
 
     bool isCancelled() const { return m_cancel.isCancelled(); }
 
-    // Public: callers that pass the finished url on in a header need it too.
     static QString urlWithParams(const QString &url, const QMap<QString, QString> &params);
 
     // A copy of this client that also aborts when `secondary` fires (race losers).
@@ -36,7 +35,6 @@ public:
     // Off for endpoints that must not recurse (the solver's own calls) or where 403 is the answer.
     Client &setBypassEnabled(bool enabled) { m_bypass = enabled; return *this; }
 
-    // For callers that log their own line - miruro's urls are 300 chars of base64.
     Client &setVerbose(bool verbose) { m_verbose = verbose; return *this; }
 
     // Idle-transfer limit, not a deadline - raise it for a host that builds a playlist on demand.

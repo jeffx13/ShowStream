@@ -34,7 +34,6 @@ public:
     Q_INVOKABLE void fetchMore();
     Q_INVOKABLE void reload();
     Q_INVOKABLE void cancel();
-    // Force a view relayout (model reset) without changing data - e.g. on aspect-ratio change.
     Q_INVOKABLE void reset() { beginResetModel(); endResetModel(); }
 
     // An out-of-range index yields a show with no provider, which every caller already checks for.

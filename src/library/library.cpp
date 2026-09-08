@@ -125,7 +125,6 @@ void Library::initDatabase() {
     }
 
     QSqlQuery query(m_db);
-    // WAL + relaxed sync: faster writes, fine for a media library.
     query.exec("PRAGMA journal_mode=WAL");
     query.exec("PRAGMA synchronous=NORMAL");
     if (!query.exec(R"(
@@ -620,7 +619,6 @@ void Library::fetchUnwatchedEpisodes(int libraryType, bool force) {
     }
 
     m_fetchWatcher.setFuture(QtConcurrent::run([this, shows, libraryType] {
-        // Bounded batches so a large library doesn't fire one job per show at once.
         constexpr int batchSize = 6;
         QList<QPair<QString,int>> results;
         results.reserve(shows.size());

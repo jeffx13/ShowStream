@@ -23,7 +23,6 @@ constexpr int    kMaxTextLen  = 100;
 QMutex         g_optionsMutex;
 DanmakuOptions g_options;
 
-// Laying 45k comments into lanes costs ~40ms, so restyling reuses the layout.
 struct Layout {
     QString     key;
     QByteArray  fingerprint;

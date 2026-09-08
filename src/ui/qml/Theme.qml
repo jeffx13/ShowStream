@@ -95,7 +95,6 @@ QtObject {
                      .map(n => ({ name: n, label: n.charAt(0).toUpperCase() + n.slice(1) }))
     }
 
-    // Light themes flip the accent derivations darker so they stay visible on a light surface.
     readonly property bool isLight: pal.light === true
 
     // Accent is decoupled from the palette so a custom accent works on every theme.

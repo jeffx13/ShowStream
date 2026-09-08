@@ -2,7 +2,6 @@ import QtQuick
 import QtQuick.Layouts
 import ".."
 
-// `stacked` puts the label above the slider rather than beside it.
 GridLayout {
     id: root
 

@@ -59,7 +59,6 @@ struct PlayInfo {
     QMap<QString, QString> headers;
     double progress = 0.0;   // where to resume, as a fraction of the duration
 
-    // Kept so the player can re-render the track without the provider.
     QList<DanmakuComment> danmaku;
     QString danmakuKey;
 

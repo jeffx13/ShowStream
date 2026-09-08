@@ -139,7 +139,6 @@ Item {
             onOpenFileRequested: folderDialog.open()
         }
 
-        // Skip Intro / Next Episode buttons during OP/ED windows; empty areas pass clicks through.
         Item {
             anchors.fill: parent
             z: controlBar.z + 1

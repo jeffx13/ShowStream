@@ -25,7 +25,7 @@ public:
 
     void setServers(const QList<VideoServer> &servers, ShowProvider *provider);
     void setCurrentIndex(int index);
-    void setCurrentServer(const QString &name);   // set current + preferred by name (sort-safe)
+    void setCurrentServer(const QString &name);
     void setPreferredServer(int index);
     void clear();
 
@@ -36,7 +36,6 @@ public:
 
     ShowProvider *provider() const { return m_provider; }
 
-    // Extracted PlayInfo cache keyed by server name (a cached server = Working).
     void setCachedSources(QHash<QString, PlayInfo> &&cache);
     void cacheSource(const QString &name, PlayInfo info);
     void markBroken(const QString &name);
@@ -47,7 +46,7 @@ signals:
     void countChanged();
 
 private:
-    bool hasDub() const;   // only the Dubbed/Subbed section headers need this
+    bool hasDub() const;
 
     int m_currentIndex = -1;
     QList<VideoServer> m_servers;
@@ -56,7 +55,7 @@ private:
     QSet<QString> m_brokenServers;
 
     void emitStatusChanged(const QString &name);
-    void resort();   // keep working servers (grouped by translation) first, broken last
+    void resort();
 
     enum { NameRole = Qt::UserRole, LinkRole, StatusRole, TranslationRole, SectionRole };
     int rowCount(const QModelIndex &parent = QModelIndex()) const override;

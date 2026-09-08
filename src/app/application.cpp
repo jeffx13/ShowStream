@@ -121,7 +121,6 @@ bool Application::isNewerVersion(const QString &latest, const QString &current) 
 }
 
 void Application::checkForUpdates() {
-    // Fire-and-forget: nothing waits on it, and it only touches AppShell.
     QThreadPool::globalInstance()->start([]() {
         Client client({}, false);
         auto resp = client.get("https://api.github.com/repos/jeffx13/AoNami/releases/latest",

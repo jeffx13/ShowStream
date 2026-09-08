@@ -142,7 +142,6 @@ ApplicationWindow {
     Component.onCompleted: {
         Globals.root = root
 
-        // Every window and navigation state starts at its default; only a file argument moves off it.
         if (App.playlist.playAt(0)) {
             Globals.page = AppShell.Player
             history = [AppShell.Player]
@@ -251,7 +250,6 @@ ApplicationWindow {
         onTriggered: App.library.fetchUnwatchedEpisodes(App.library.libraryType)
     }
 
-    // Pages load lazily and stay cached; the player is the MpvPage behind this.
     Item {
         z: 1
         anchors.fill: contentArea

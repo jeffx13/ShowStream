@@ -89,7 +89,6 @@ Rectangle {
             iconHoverColor: Theme.textPrimary
         }
 
-        // Clipped by the pill so the fill follows the rounded shape rather than overlapping it.
         Rectangle {
             anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
             width: parent.width * npPill.progress

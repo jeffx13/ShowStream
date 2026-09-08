@@ -11,7 +11,6 @@ void ServerListModel::setServers(const QList<VideoServer> &servers, ShowProvider
     m_sourceCache.clear();
     m_brokenServers.clear();
     m_currentIndex = -1;
-    // Model owns the order so the player tab renders clean Subbed/Dubbed/Broken sections.
     std::stable_sort(m_servers.begin(), m_servers.end(),
                      [](const VideoServer &a, const VideoServer &b) {
                          if (a.translation != b.translation) return a.translation < b.translation;

@@ -30,7 +30,6 @@ void keepDisplayAwake() { SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQ
 void allowDisplaySleep() { SetThreadExecutionState(ES_CONTINUOUS); }
 }
 
-
 // Sharing Qt's GL context: a private thread and second context makes the driver sync every shader pass.
 class MpvRenderer : public QQuickFramebufferObject::Renderer {
     MpvPlayer *m_obj;
@@ -1065,7 +1064,6 @@ void MpvPlayer::setSubPos(int pos) {
     applySubLayout();
 }
 
-// Video is remembered as resolution+rank, audio as title+rank.
 void MpvPlayer::saveTrackPrefs() {
     if (m_applyingTrackPrefs || m_showKey.isEmpty()) return;
     const QString key = QStringLiteral("tracks/") + m_showKey;

@@ -94,7 +94,6 @@ void SkipTimes::onCurrentItemChanged(PlaylistItem *item) {
     rebuildEpisodeCount();
     emit selectedEpisodeIndexChanged();
 
-    // Restore a previously-chosen MAL id for this show (survives restarts).
     if (m_isOnline && !m_showLink.isEmpty() && !m_malIdCache.contains(m_showLink)) {
         int saved = Settings::instance().value(Config::skipMal(m_showLink)).toInt();
         if (saved > 0) m_malIdCache.insert(m_showLink, saved);

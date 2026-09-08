@@ -8,7 +8,6 @@
 class Client;
 class MpvPlayer;
 
-// The SubDL REST API. Not a ShowProvider - it only ever backs the search below.
 namespace SubDl {
 
 // SubDL wraps files in a release even when there is only one, so results are flattened.
@@ -36,7 +35,6 @@ QString cachePath(const QString &fileId);
 
 }
 
-// Deliberately separate from the player's track list; a result reaches mpv only once picked.
 class SubtitleSearch : public QAbstractListModel
 {
     Q_OBJECT
@@ -52,7 +50,6 @@ public:
     ~SubtitleSearch();
 
     Q_INVOKABLE void search(const QString &query);
-    // Skips a query that already finished, so re-opening the page costs nothing.
     Q_INVOKABLE void searchIfNew(const QString &query);
     Q_INVOKABLE void use(int row, bool secondary = false);
     Q_INVOKABLE void cancel();
@@ -70,7 +67,6 @@ public:
     Q_SIGNAL void queryChanged();
 
 private:
-    // Everything data() returns is precomputed: it runs per row per repaint.
     struct Row {
         SubDl::Result result;
         QString       displayName;

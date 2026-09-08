@@ -43,7 +43,7 @@ public:
     Q_INVOKABLE void loadIndex(const QModelIndex &index);
     Q_INVOKABLE void reload();
     Q_INVOKABLE void loadServer(int index);
-    Q_INVOKABLE void tryNextServer();   // auto-fallback when the current server fails to play
+    Q_INVOKABLE void tryNextServer();
     Q_INVOKABLE void showCurrentItemName() const;
     Q_INVOKABLE void saveProgress() const;
     Q_INVOKABLE void cancel();
@@ -98,7 +98,6 @@ private:
     void ensureMpvProgressConnection();
     void onPlaybackProgress();
 
-    // Resolve the next episode's working server while the current one plays, so advancing is near-instant.
     struct Prefetch {
         bool valid = false;
         QString itemLink;
@@ -111,7 +110,7 @@ private:
     Prefetch          m_prefetch;
     CancelToken       m_prefetchCancel;
     QFuture<void>     m_prefetchFuture;
-    QTimer            m_prefetchTimer;   // debounces prefetch so the current episode buffers first
+    QTimer            m_prefetchTimer;
     void prefetchNextEpisode();
     void startNextEpisodePrefetch();
     QSharedPointer<PlaylistItem> nextItem() const;
