@@ -165,13 +165,29 @@ QString sniffSubtitleExtension(const QByteArray &data) {
     return {};
 }
 
+bool isLangCode(const QString &text) {
+    if (text.size() < 2 || text.size() > 3) return false;
+    for (const QChar c : text)
+        if (!c.isLetter() || c.unicode() > 0x7F) return false;
+    // Shaped like a code but never one, and these turn up in subtitle filenames.
+    static const QSet<QString> notCodes{"sub", "dub", "cc", "sdh", "srt", "vtt", "ass"};
+    return !notCodes.contains(text.toLower());
+}
+
+// These hosts put the language in the filename - "ara-9.vtt", "..._sub_eng-0.vtt" - which covers
+// far more of them than a label table ever would.
+QString langFromFileName(const QUrl &url) {
+    QString stem = QFileInfo(url.path()).completeBaseName();
+    static const QRegularExpression trailingIndex(QStringLiteral(R"(-\d+$)"));
+    stem.remove(trailingIndex);
+    const QString tail = stem.section(QLatin1Char('_'), -1);
+    return isLangCode(tail) ? tail.toLower() : QString();
+}
+
 QString subtitleLang(const Track &track) {
-    const QString lang = track.lang.trimmed();
-    if (lang.size() >= 2 && lang.size() <= 3) {
-        bool letters = true;
-        for (const QChar c : lang) letters = letters && c.isLetter();
-        if (letters) return lang.toLower();
-    }
+    if (const QString lang = track.lang.trimmed(); isLangCode(lang)) return lang.toLower();
+    if (const QString fromName = langFromFileName(track.url); !fromName.isEmpty()) return fromName;
+
     static const QMap<QString, QString> byLabel{
         {"english", "eng"}, {"spanish", "spa"}, {"portuguese", "por"}, {"french", "fra"},
         {"german", "deu"},  {"italian", "ita"}, {"arabic", "ara"},     {"russian", "rus"},

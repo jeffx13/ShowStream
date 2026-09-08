@@ -515,15 +515,18 @@ void MpvPlayer::onFileLoaded() {
     applyPendingSeek();
 
     m_videoListModel.clear();
-    if (!m_videosToBeAdded.isEmpty()) {
+    // A lone entry is the file mpv already loaded. mpv reports that itself - as one track per HLS
+    // variant, labelled with real resolutions - and the row added here could never bind to any of
+    // those ids, leaving a dead duplicate named after the server.
+    if (m_videosToBeAdded.count() > 1) {
         m_videoListModel.append(m_videosToBeAdded[0].url,
                                 m_videosToBeAdded[0].title,
                                 m_videosToBeAdded[0].lang,
                                 m_videosToBeAdded[0].height);
         for (int i = 1; i < m_videosToBeAdded.count(); i++)
             addVideo(m_videosToBeAdded[i]);
-        m_videosToBeAdded.clear();
     }
+    m_videosToBeAdded.clear();
     m_audioListModel.clear();
     for (int i = 0; i < m_audiosToBeAdded.size(); ++i)
         addAudio(m_audiosToBeAdded[i], /*select=*/i == 0);
