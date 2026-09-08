@@ -293,7 +293,7 @@ void Playlist::loadServer(int index) {
     if (const auto *cached = m_serverListModel.cachedSource(server.name)) {
         PlayInfo playItem = *cached;
         if (auto *mpv = MpvPlayer::instance()) {
-            // The cached entry skips isPlayable, so refresh the clearance headers; its cookie may be stale.
+            // The cached entry skips the probe, so refresh the clearance headers; its cookie may be stale.
             if (!playItem.videos.isEmpty())
                 Cloudflare::applyClearanceHeaders(playItem.videos.first().url, playItem.headers);
             if (mpv->duration() > 0)
@@ -310,12 +310,17 @@ void Playlist::loadServer(int index) {
     m_watcher.setFuture(QtConcurrent::run([this, index, server, provider]() {
         Client client(m_cancel);
         PlayInfo playItem = provider->extractSource(&client, server);
-        if (!ServerSelector::isPlayable(&client, playItem) && !client.isCancelled()) {
-            logWarn() << "Server" << server.name << "is broken";
+        const auto verdict = ServerSelector::playability(&client, playItem);
+        if (verdict != ServerSelector::Playability::Playable && !client.isCancelled()) {
             playItem.clear();
-            QMetaObject::invokeMethod(this, [this, name = server.name]() {
-                m_serverListModel.markBroken(name);   // keep it visible (greyed), allow retry
-            }, Qt::QueuedConnection);
+            if (verdict == ServerSelector::Playability::Broken) {
+                logWarn() << "Server" << server.name << "is broken";
+                QMetaObject::invokeMethod(this, [this, name = server.name]() {
+                    m_serverListModel.markBroken(name);
+                }, Qt::QueuedConnection);
+            } else {
+                logWarn() << "Server" << server.name << "did not answer - left unchecked";
+            }
         }
         if (playItem.videos.isEmpty()) {
             logWarn() << "Server" << QString("Failed to load server %1").arg(server.name);
@@ -374,28 +379,31 @@ void Playlist::cacheRemainingServers() {
 
     m_bgCacheCancel.reset();
     m_bgCacheFuture = QtConcurrent::run([this, toCheck, provider]() {
-        // One job per server (<= ~10) - finishes in ~one round-trip instead of serially.
         QList<QFuture<void>> jobs;
         jobs.reserve(toCheck.size());
         for (const VideoServer &server : toCheck) {
             jobs.push_back(QtConcurrent::run([this, server, provider]() {
                 if (m_bgCacheCancel.isCancelled()) return;
-                bool ok = false;
+                // A throw means the check never ran, so it condemns nothing.
+                auto verdict = ServerSelector::Playability::Unknown;
                 PlayInfo playInfo;
                 try {
                     Client client(m_bgCacheCancel);
                     playInfo = provider->extractSource(&client, server);
-                    ok = !m_bgCacheCancel.isCancelled() && ServerSelector::isPlayable(&client, playInfo);
+                    if (!m_bgCacheCancel.isCancelled())
+                        verdict = ServerSelector::playability(&client, playInfo);
                 } catch (AppException &e) {
                     logWarn() << "Server" << server.name << "background cache failed:" << e.what();
                 } catch (const std::exception &e) {
                     logWarn() << "Server" << server.name << "background cache failed:" << e.what();
                 }
                 if (m_bgCacheCancel.isCancelled()) return;
-                QMetaObject::invokeMethod(this, [this, name = server.name, playInfo, ok]() {
+                QMetaObject::invokeMethod(this, [this, name = server.name, playInfo, verdict]() {
                     if (m_bgCacheCancel.isCancelled()) return;
-                    if (ok) m_serverListModel.cacheSource(name, std::move(playInfo));
-                    else    m_serverListModel.markBroken(name);
+                    if (verdict == ServerSelector::Playability::Playable)
+                        m_serverListModel.cacheSource(name, std::move(playInfo));
+                    else if (verdict == ServerSelector::Playability::Broken)
+                        m_serverListModel.markBroken(name);
                 }, Qt::QueuedConnection);
             }));
         }

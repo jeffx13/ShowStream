@@ -428,7 +428,6 @@ Popup {
                             switch (panel.activeTab ? panel.activeTab.id : "") {
                             case "video": panel.player.setVideoIndex(index); break
                             case "audio": panel.player.setAudioIndex(index); break
-                            // Click sets primary; clicking the one already there turns it off.
                             case "subs":  trackBtn.slotNumber === 1 ? panel.player.setPrimarySub(0)
                                                                     : panel.player.setSubIndex(index); break
                             }
@@ -1173,8 +1172,8 @@ Popup {
                         width: serverListView.width
                         height: 44
                         focusPolicy: Qt.NoFocus
+                        // Still clickable: the only way back from a wrong broken verdict.
                         opacity: isBroken ? 0.5 : 1.0
-                        enabled: !isBroken
                         onClicked: App.playlist.loadServer(index)
 
                         background: PanelRow {
@@ -1258,7 +1257,6 @@ Popup {
                         }
                     }
 
-                    // SubDL takes a comma list, so one search returns every chosen language.
                     Flow {
                         id: subLangs
                         Layout.fillWidth: true

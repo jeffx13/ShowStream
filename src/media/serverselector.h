@@ -15,6 +15,9 @@ public:
         bool found() const { return index >= 0; }
     };
 
-    static bool isPlayable(Client *client, PlayInfo &playItem);
+    // Unknown is not a verdict: the probe never reached one, so the server stays unchecked.
+    enum class Playability { Playable, Broken, Unknown };
+
+    static Playability playability(Client *client, PlayInfo &playItem);
     static Result findWorkingServer(Client *client, ShowProvider *provider, QList<VideoServer> &servers);
 };

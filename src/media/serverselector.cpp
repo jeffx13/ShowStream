@@ -10,11 +10,21 @@
 #include <QUrl>
 #include <QRegularExpression>
 #include <QElapsedTimer>
+#include <QThread>
 #include "app/exception.h"
+
+using Playability = ServerSelector::Playability;
 
 namespace {
 
-// code <= 0 is a transport blip; any real status is an answer. Bypass off, or a dead CDN's 403 opens a browser.
+// "Ask again", not "gone" - including HlsProxy's 502 for an unreachable upstream. One flaky
+// CDN host answers this way while its siblings serve fine, so none of these may condemn.
+bool isTransient(int code) {
+    return code <= 0 || code == 408 || code == 425 || code == 429
+        || code == 500 || code == 502 || code == 503 || code == 504;
+}
+
+// Bypass off, or a dead CDN's 403 opens a browser.
 Client::Response probe(Client *client, const QString &url,
                        QMap<QString, QString> headers, bool head,
                        const QString &range = {}) {
@@ -26,33 +36,35 @@ Client::Response probe(Client *client, const QString &url,
 
     Client::Response response;
     QElapsedTimer timer;
-    for (int attempt = 0; attempt < 2; ++attempt) {
+    for (int attempt = 0; attempt < 3; ++attempt) {
         timer.start();
         response = head ? prober.head(url, headers) : prober.get(url, headers);
-        // A failure that burned the full timeout means the host is gone, not blipping.
-        if (response.code > 0 || prober.isCancelled() || timer.elapsed() > 2000) break;
+        if (!isTransient(response.code) || prober.isCancelled()) break;
+        // A slow failure is a dead host, and retrying it would stall the race behind it.
+        if (timer.elapsed() > 2000) break;
+        if (attempt < 2) QThread::msleep(200 << attempt);
     }
     return response;
 }
 
-// The key (which lives in the media playlist) has to be fetchable or nothing decodes.
 template <typename Resolve>
-bool keyIsReachable(Client *client, const QString &body, const QMap<QString, QString> &headers,
-                    const Resolve &resolve) {
+Playability keyReachability(Client *client, const QString &body, const QMap<QString, QString> &headers,
+                            const Resolve &resolve) {
     static const QRegularExpression keyRe(QStringLiteral("#EXT-X-KEY:([^\r\n]+)"));
     const auto keyMatch = keyRe.match(body);
-    if (!keyMatch.hasMatch()) return true;
+    if (!keyMatch.hasMatch()) return Playability::Playable;
 
     static const QRegularExpression uriRe(QStringLiteral("URI=\"([^\"]+)\"|URI=([^\\s,]+)"));
     const auto uriMatch = uriRe.match(keyMatch.captured(1));
-    if (!uriMatch.hasMatch()) return true;
+    if (!uriMatch.hasMatch()) return Playability::Playable;
 
     const QString keyUri = uriMatch.captured(1).isEmpty() ? uriMatch.captured(2) : uriMatch.captured(1);
     const QString keyUrl = resolve(keyUri);
-    if (const auto head = probe(client, keyUrl, headers, true); head.code >= 200 && head.code < 400)
-        return true;
+    const auto head = probe(client, keyUrl, headers, true);
+    if (head.code >= 200 && head.code < 400) return Playability::Playable;
     const auto get = probe(client, keyUrl, headers, false);
-    return get.code >= 200 && get.code < 400 && !get.body.isEmpty();
+    if (get.code >= 200 && get.code < 400 && !get.body.isEmpty()) return Playability::Playable;
+    return (isTransient(head.code) || isTransient(get.code)) ? Playability::Unknown : Playability::Broken;
 }
 
 QString firstUriAfter(const QStringList &lines, const QString &marker) {
@@ -68,18 +80,21 @@ QString firstUriAfter(const QStringList &lines, const QString &marker) {
 }
 
 // Probe down to a real segment - an intact playlist with 404 segments otherwise fakes "working".
-bool checkHls(Client *client, const QString &url, const QMap<QString, QString> &headers) {
+Playability checkHls(Client *client, const QString &url, const QMap<QString, QString> &headers) {
     QString target = url;
     for (int depth = 0; depth < 2; ++depth) {   // one master -> one media playlist
         const auto pl = probe(client, target, headers, false, QStringLiteral("bytes=0-131071"));
-        if (pl.code < 200 || pl.code >= 400) return false;
-        if (!pl.body.startsWith("#EXTM3U")) return true;   // got media bytes - reachable
+        if (isTransient(pl.code)) return Playability::Unknown;
+        if (pl.code < 200 || pl.code >= 400) return Playability::Broken;
+        if (!pl.body.startsWith("#EXTM3U")) return Playability::Playable;   // got media bytes - reachable
 
         const QUrl base(target);
         auto resolve = [&base](const QString &u) {
             return (QUrl(u).scheme().isEmpty() ? base.resolved(QUrl(u)) : QUrl(u)).toString();
         };
-        if (!keyIsReachable(client, pl.body, headers, resolve)) return false;
+        if (const auto key = keyReachability(client, pl.body, headers, resolve);
+            key != Playability::Playable)
+            return key;
 
         const QStringList lines = pl.body.split('\n');
         if (const QString variant = firstUriAfter(lines, QStringLiteral("#EXT-X-STREAM-INF")); !variant.isEmpty()) {
@@ -88,23 +103,24 @@ bool checkHls(Client *client, const QString &url, const QMap<QString, QString> &
         }
 
         const QString segment = firstUriAfter(lines, {});
-        if (segment.isEmpty()) return false;
+        if (segment.isEmpty()) return Playability::Broken;
         const QString segUrl = resolve(segment);
-        if (const auto seg = probe(client, segUrl, headers, false, QStringLiteral("bytes=0-0"));
-            seg.code == 200 || seg.code == 206)
-            return true;
+        const auto seg = probe(client, segUrl, headers, false, QStringLiteral("bytes=0-0"));
+        if (seg.code == 200 || seg.code == 206) return Playability::Playable;
         const auto head = probe(client, segUrl, headers, true);
-        return head.code >= 200 && head.code < 400;
+        if (head.code >= 200 && head.code < 400) return Playability::Playable;
+        return (isTransient(seg.code) || isTransient(head.code)) ? Playability::Unknown : Playability::Broken;
     }
-    return false;   // nested masters beyond two levels - can't verify
+    return Playability::Unknown;   // nested masters beyond two levels - can't verify
 }
 
 }
 
-bool ServerSelector::isPlayable(Client *client, PlayInfo &playItem) {
-    if (playItem.videos.isEmpty()) return false;
+Playability ServerSelector::playability(Client *client, PlayInfo &playItem) {
+    // An empty extraction says nothing about the server; its embed page may have been throttled.
+    if (playItem.videos.isEmpty()) return Playability::Unknown;
     const auto &video = playItem.videos.first();
-    if (video.url.isLocalFile()) return true;
+    if (video.url.isLocalFile()) return Playability::Playable;
 
     const QString url = video.url.toString();
 
@@ -126,7 +142,8 @@ bool ServerSelector::isPlayable(Client *client, PlayInfo &playItem) {
     // Many hosts refuse HEAD; settle it with a ranged GET before giving up.
     if (!looksHls && (headResp.code <= 0 || headResp.code == 405 || contentType.isEmpty())) {
         auto getResp = probe(client, url, headers, false, QStringLiteral("bytes=0-1023"));
-        if (getResp.code <= 0 || getResp.code >= 400) return false;
+        if (isTransient(getResp.code)) return Playability::Unknown;
+        if (getResp.code >= 400) return Playability::Broken;
         if (contentType.isEmpty()) contentType = getResp.header("Content-Type").toLower();
         if (headResp.code <= 0) headResp = getResp;
         if (getResp.body.startsWith(QLatin1String("#EXTM3U")))
@@ -137,13 +154,14 @@ bool ServerSelector::isPlayable(Client *client, PlayInfo &playItem) {
         return checkHls(client, url, headers);
 
     auto ranged = probe(client, url, headers, false, QStringLiteral("bytes=0-0"));
-    if (ranged.code == 200 || ranged.code == 206) return true;
+    if (ranged.code == 200 || ranged.code == 206) return Playability::Playable;
     if (headResp.code >= 200 && headResp.code < 400) {
         bool isMp4 = url.endsWith(".mp4", Qt::CaseInsensitive) || contentType.startsWith("video/mp4");
         if (isMp4 || contentType.startsWith("video/") || contentType.isEmpty())
-            return true;
+            return Playability::Playable;
     }
-    return false;
+    return (isTransient(ranged.code) || isTransient(headResp.code)) ? Playability::Unknown
+                                                                   : Playability::Broken;
 }
 
 ServerSelector::Result ServerSelector::findWorkingServer(Client *client, ShowProvider *provider, QList<VideoServer> &servers) {
@@ -154,7 +172,6 @@ ServerSelector::Result ServerSelector::findWorkingServer(Client *client, ShowPro
         std::any_of(servers.begin(), servers.end(),
                     [want](const VideoServer &s) { return s.translation == want; });
 
-    // The race is won on speed, usually by the lowest resolution, so quality is picked here.
     QString preferred = provider->preferredServer();
     const bool userChose = !preferred.isEmpty();
     if (!userChose) {
@@ -176,14 +193,16 @@ ServerSelector::Result ServerSelector::findWorkingServer(Client *client, ShowPro
             const char *why = userChose ? "preferred server" : "best quality";
             try {
                 auto playInfo = provider->extractSource(client, *it);
-                if (isPlayable(client, playInfo)) {
+                const auto verdict = playability(client, playInfo);
+                if (verdict == Playability::Playable) {
                     logOk() << "Server" << "Using" << why << it->name;
                     result.cachedSources.insert(it->name, playInfo);
                     result.index = idx;
                     result.playInfo = std::move(playInfo);
                     return result;
                 }
-                logWarn() << "Server" << why << it->name << "is broken";
+                if (verdict == Playability::Broken) logWarn() << "Server" << why << it->name << "is broken";
+                else                                logWarn() << "Server" << why << it->name << "did not answer";
             } catch (AppException &e) {
                 e.log();
             } catch (const std::exception &e) {
@@ -207,23 +226,24 @@ ServerSelector::Result ServerSelector::findWorkingServer(Client *client, ShowPro
         std::atomic<int>  winnerIndex{-1};
         CancelToken       raceOver;
 
-        QList<QFuture<bool>> jobs;
+        QList<QFuture<void>> jobs;
         jobs.reserve(hi - lo);
         for (int i = lo; i < hi; ++i) {
             if (client->isCancelled()) break;
             jobs.push_back(QtConcurrent::run([i, &servers, client, provider,
                                               &winnerIndex, &winnerPlayInfo,
                                               &resultMutex, &extractedSources,
-                                              &raceOver]() -> bool {
+                                              &raceOver]() {
                 Client subClient = client->withCancel(raceOver);
-                if (subClient.isCancelled()) return true;
+                if (subClient.isCancelled()) return;
 
                 try {
                     auto playInfo = provider->extractSource(&subClient, servers[i]);
-                    if (subClient.isCancelled()) return true;
+                    if (subClient.isCancelled()) return;
 
-                    if (isPlayable(&subClient, playInfo)) {
-                        if (subClient.isCancelled()) return true;
+                    const auto verdict = playability(&subClient, playInfo);
+                    if (verdict == Playability::Playable) {
+                        if (subClient.isCancelled()) return;
 
                         std::lock_guard<std::mutex> lock(resultMutex);
                         extractedSources.insert(servers[i].name, playInfo);
@@ -234,20 +254,17 @@ ServerSelector::Result ServerSelector::findWorkingServer(Client *client, ShowPro
                             raceOver.cancel();
                             logOk() << "Server" << "Using" << servers[i].name;
                         }
-                        return true;
+                        return;
                     }
-                    if (subClient.isCancelled()) return true;   // lost the race, not broken
-                    logWarn() << "Server" << servers[i].name << "is broken";
-                    return false;
+                    if (subClient.isCancelled()) return;   // lost the race, not broken
+                    if (verdict == Playability::Broken) logWarn() << "Server" << servers[i].name << "is broken";
+                    else                                logWarn() << "Server" << servers[i].name << "did not answer";
                 } catch (AppException &e) {
                     e.log();
-                    return true;
                 } catch (const std::exception &e) {
                     logWarn() << "Server" << servers[i].name << e.what();
-                    return true;
                 } catch (...) {
                     logWarn() << "Server" << servers[i].name << "unknown error";
-                    return true;
                 }
             }));
         }
