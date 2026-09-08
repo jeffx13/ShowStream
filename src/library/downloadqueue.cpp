@@ -9,13 +9,14 @@
 #include "media/serverselector.h"
 #include "app/settings.h"
 #include "app/exception.h"
+#include "net/client.h"
+#include <QCryptographicHash>
+#include <QSaveFile>
 
 DownloadTask::DownloadTask(const QString &videoName, const QString &folder, const QString &link,
                            const QString &displayName, const QMap<QString, QString> &headers)
     : videoName(videoName), folder(folder), link(link), headers(headers), displayName(displayName)
-{
-    path = QDir::cleanPath(folder + "/" + videoName + ".mp4");
-}
+{}
 
 DownloadTask::DownloadTask(QSharedPointer<PlaylistItem> episode, ShowProvider *provider, const QString &workDir)
     : m_episode(episode), m_provider(provider)
@@ -24,7 +25,6 @@ DownloadTask::DownloadTask(QSharedPointer<PlaylistItem> episode, ShowProvider *p
         QString showName = episode->parent()->name;
         videoName = DownloadQueue::cleanFolderName(episode->displayName.trimmed().replace("\n", ". "));
         displayName = showName + " : " + videoName;
-        path = QDir::cleanPath(workDir + "/" + videoName + ".mp4");
         folder = workDir;
     }
 }
@@ -34,11 +34,18 @@ bool DownloadTask::checkDependencies() {
     return QFile::exists(s_m3u8dlPath) && QFile::exists(s_ffmpegPath);
 }
 
+// ':' separates the option fields, so a Windows drive letter has to be escaped.
+static QString muxEscape(const QString &value) {
+    QString escaped = value;
+    escaped.replace(QLatin1Char(':'), QLatin1String("\\:"));
+    return escaped;
+}
+
 QStringList DownloadTask::toolArguments() const {
     QStringList args {
         link,
         "--save-dir", folder,
-        "--tmp-dir", folder,
+        "--tmp-dir", tmpDir(),
         "--save-name", videoName,
         "--ffmpeg-binary-path", s_ffmpegPath,
         "--del-after-done", "--no-date-info", "--no-log",
@@ -48,6 +55,18 @@ QStringList DownloadTask::toolArguments() const {
         args << "--max-speed" << maxSpeed;
     for (auto it = headers.constBegin(); it != headers.constEnd(); ++it)
         args << "-H" << (it.key() + ": " + it.value());
+
+    if (!subtitleFiles.isEmpty()) {
+        // bin_path explicitly: the bundled ffmpeg is not on PATH.
+        args << "-M" << ("format=mkv:muxer=ffmpeg:bin_path="
+                         + muxEscape(QDir::toNativeSeparators(s_ffmpegPath)));
+        for (const SubtitleFile &sub : subtitleFiles) {
+            QString option = "path=" + muxEscape(QDir::toNativeSeparators(sub.path));
+            if (!sub.lang.isEmpty()) option += ":lang=" + sub.lang;
+            if (!sub.name.isEmpty()) option += ":name=" + sub.name;
+            args << "--mux-import" << option;
+        }
+    }
     return args;
 }
 
@@ -61,10 +80,30 @@ QStringList DownloadTask::ffmpegArguments() const {
     if (!headerBlock.isEmpty()) args << "-headers" << headerBlock;
     args << "-i" << link;
     if (!headerBlock.isEmpty()) args << "-headers" << headerBlock;
-    args << "-i" << audioLink
-         << "-map" << "0:v:0" << "-map" << "1:a:0"
-         << "-c" << "copy" << "-movflags" << "+faststart"
-         << partPath();
+    args << "-i" << audioLink;
+    // Local files, so no -headers for these inputs.
+    for (const SubtitleFile &sub : subtitleFiles)
+        args << "-i" << QDir::toNativeSeparators(sub.path);
+
+    args << "-map" << "0:v:0" << "-map" << "1:a:0";
+    // Whole input, not <n>:s:0 - a mis-sniffed file would otherwise abort the mux.
+    for (int i = 0; i < subtitleFiles.size(); ++i)
+        args << "-map" << QString::number(2 + i);
+
+    args << "-c" << "copy";
+    for (int i = 0; i < subtitleFiles.size(); ++i) {
+        const SubtitleFile &sub = subtitleFiles[i];
+        const bool styled = sub.path.endsWith(".ass", Qt::CaseInsensitive)
+                         || sub.path.endsWith(".ssa", Qt::CaseInsensitive);
+        // WebVTT cannot be copied into Matroska; SubRip is the lossless-enough target.
+        args << QStringLiteral("-c:s:%1").arg(i) << (styled ? "copy" : "srt");
+        if (!sub.lang.isEmpty())
+            args << QStringLiteral("-metadata:s:s:%1").arg(i) << ("language=" + sub.lang);
+        if (!sub.name.isEmpty())
+            args << QStringLiteral("-metadata:s:s:%1").arg(i) << ("title=" + sub.name);
+    }
+    if (subtitleFiles.isEmpty()) args << "-movflags" << "+faststart";   // mp4 only
+    args << partPath();
     return args;
 }
 
@@ -99,11 +138,112 @@ QString DownloadTask::extractLinkInner() {
     if (!res.playInfo.audios.isEmpty())
         audioLink = res.playInfo.audios.first().url.toString();
     headers = res.playInfo.headers;
+
+    if (subtitleFiles.isEmpty() && !res.playInfo.subtitles.isEmpty()) {
+        setProgressText("Fetching subtitles...");
+        fetchSubtitles(client, res.playInfo.subtitles);
+    }
     setProgressText("Extracted source successfully!");
 
     m_episode = nullptr;
     m_provider = nullptr;
     return link;
+}
+
+namespace {
+
+// Sniffed, never trusted from the url: a 200 carrying an HTML error page would otherwise reach
+// the muxer. Matching a real timecode rather than a bare "-->" is what rejects that page, since
+// every HTML comment ends in one.
+QString sniffSubtitleExtension(const QByteArray &data) {
+    const QByteArray head = data.left(4096);
+    if (head.startsWith("WEBVTT"))      return QStringLiteral(".vtt");
+    if (head.contains("[Script Info]")) return QStringLiteral(".ass");
+    static const QRegularExpression cue(
+        QStringLiteral(R"(\d{1,2}:\d{2}:\d{2}[,.]\d{1,3}\s*-->\s*\d{1,2}:\d{2}:\d{2})"));
+    if (cue.match(QString::fromUtf8(head)).hasMatch()) return QStringLiteral(".srt");
+    return {};
+}
+
+QString subtitleLang(const Track &track) {
+    const QString lang = track.lang.trimmed();
+    if (lang.size() >= 2 && lang.size() <= 3) {
+        bool letters = true;
+        for (const QChar c : lang) letters = letters && c.isLetter();
+        if (letters) return lang.toLower();
+    }
+    static const QMap<QString, QString> byLabel{
+        {"english", "eng"}, {"spanish", "spa"}, {"portuguese", "por"}, {"french", "fra"},
+        {"german", "deu"},  {"italian", "ita"}, {"arabic", "ara"},     {"russian", "rus"},
+        {"japanese", "jpn"},{"korean", "kor"},  {"chinese", "zho"},    {"indonesian", "ind"},
+    };
+    return byLabel.value(track.title.trimmed().toLower());
+}
+
+// Feeds --mux-import's name= field, where ':' would split the option.
+QString subtitleName(const Track &track) {
+    QString name = track.title;
+    name.remove(QRegularExpression(QStringLiteral("[\\x00-\\x1F:\"]")));
+    name = name.simplified();
+    return name.left(40);
+}
+
+}
+
+void DownloadTask::fetchSubtitles(Client &client, const QList<Track> &tracks) {
+    const QString dir = Settings::tempDir() + QStringLiteral("/downloadsubs");
+    QDir().mkpath(dir);
+    const QString key = QString::fromLatin1(
+        QCryptographicHash::hash(basePath().toUtf8(), QCryptographicHash::Md5).toHex().left(12));
+
+    int index = 0;
+    for (const Track &track : tracks) {
+        if (m_cancel.isCancelled()) return;
+        // The danmaku overlay is generated from the current style settings, not a source track.
+        if (track.lang == QLatin1String("danmaku")) continue;
+        ++index;
+
+        if (track.url.isLocalFile()) {
+            const QString local = track.url.toLocalFile();
+            if (QFileInfo(local).size() > 0)
+                subtitleFiles.append({local, subtitleLang(track), subtitleName(track), false});
+            continue;
+        }
+        const QString scheme = track.url.scheme();
+        if (scheme != QLatin1String("http") && scheme != QLatin1String("https")) continue;
+
+        // A subtitle that will not come down must never fail the video.
+        const auto response = client.getBytes(track.url.toString(), headers);
+        if (response.code != 200 || response.bytes.isEmpty()) {
+            logWarn() << "Downloader" << "Subtitle fetch failed" << response.code << track.url.toString();
+            continue;
+        }
+        const QString extension = sniffSubtitleExtension(response.bytes);
+        if (extension.isEmpty()) {
+            logWarn() << "Downloader" << "Unrecognised subtitle format" << track.url.toString();
+            continue;
+        }
+
+        const QString file = QDir::cleanPath(
+            QStringLiteral("%1/%2_%3%4").arg(dir, key).arg(index).arg(extension));
+        QSaveFile out(file);
+        if (!out.open(QIODevice::WriteOnly)) continue;
+        out.write(response.bytes);
+        if (!out.commit()) continue;
+        subtitleFiles.append({file, subtitleLang(track), subtitleName(track), true});
+    }
+}
+
+void DownloadTask::prepareSubtitles() {
+    for (int i = subtitleFiles.size() - 1; i >= 0; --i)
+        if (QFileInfo(subtitleFiles[i].path).size() <= 0) subtitleFiles.removeAt(i);
+    m_useMkv.store(!subtitleFiles.isEmpty(), std::memory_order_release);
+}
+
+void DownloadTask::discardSubtitles() {
+    for (const SubtitleFile &sub : subtitleFiles)
+        if (sub.owned) QFile::remove(sub.path);
+    subtitleFiles.clear();
 }
 
 void DownloadTask::setProgressValue(int value) {
@@ -122,14 +262,14 @@ void DownloadTask::setProgressValue(int value) {
         else
             m_etaText.clear();
         rebuildStats();
-    }, Qt::QueuedConnection);
+    }, Qt::AutoConnection);
 }
 
 void DownloadTask::setProgressText(const QString &text) {
     QMetaObject::invokeMethod(this, [this, text]() {
         if (m_progressText == text) return;
         m_progressText = text;
-    }, Qt::QueuedConnection);
+    }, Qt::AutoConnection);
 }
 
 void DownloadTask::setSpeed(const QString &speed) {
@@ -137,7 +277,7 @@ void DownloadTask::setSpeed(const QString &speed) {
         if (m_speed == speed) return;
         m_speed = speed;
         rebuildStats();
-    }, Qt::QueuedConnection);
+    }, Qt::AutoConnection);
 }
 
 void DownloadTask::resetStats() {
@@ -146,7 +286,7 @@ void DownloadTask::resetStats() {
         m_speed.clear();
         m_etaText.clear();
         m_stats.clear();
-    }, Qt::QueuedConnection);
+    }, Qt::AutoConnection);
 }
 
 void DownloadTask::rebuildStats() {
@@ -162,6 +302,12 @@ QString DownloadTask::formatEta(int seconds) {
     if (h > 0)
         return QString("%1:%2:%3").arg(h).arg(m, 2, 10, QChar('0')).arg(s, 2, 10, QChar('0'));
     return QString("%1:%2").arg(m, 2, 10, QChar('0')).arg(s, 2, 10, QChar('0'));
+}
+
+// Either container counts: a subtitled download lands as .mkv, everything else as .mp4.
+static bool alreadyDownloaded(const QString &basePath) {
+    return QFile::exists(basePath + QStringLiteral(".mp4"))
+        || QFile::exists(basePath + QStringLiteral(".mkv"));
 }
 
 QString DownloadQueue::cleanFolderName(const QString &name) {
@@ -195,7 +341,7 @@ QVariant DownloadQueue::data(const QModelIndex &index, int role) const {
     if (!task) return {};
     switch (role) {
     case NameRole:          return task->displayName;
-    case PathRole:          return task->path;
+    case PathRole:          return task->path();
     case ProgressValueRole: return task->progressValue();
     case ProgressTextRole:  return task->progressText();
     case StatusRole:        return task->status();
@@ -237,19 +383,17 @@ void DownloadQueue::downloadLink(const QString &name, const QString &link) {
     }
 
     QString cleanedName = cleanFolderName(name);
-    QString path = Settings::instance().downloadDir() + "/" + cleanedName + ".mp4";
-    if (QFile::exists(path) || m_ongoingPaths.contains(path)) {
-        logWarn() << "Downloader" << "Already exists or downloading" << path;
-        return;
-    }
-
     auto task = QSharedPointer<DownloadTask>::create(cleanedName, Settings::instance().downloadDir(),
                                                      link, cleanedName);
+    if (alreadyDownloaded(task->basePath()) || m_ongoingPaths.contains(task->basePath())) {
+        logWarn() << "Downloader" << "Already exists or downloading" << task->path();
+        return;
+    }
     // Model signals must stay outside the lock - the workers take it too.
     beginInsertRows(QModelIndex(), m_tasks.size(), m_tasks.size());
     {
         QMutexLocker locker(&m_mutex);
-        m_ongoingPaths.insert(path);
+        m_ongoingPaths.insert(task->basePath());
         m_tasks.push_back(task);
         m_taskQueue.append(task);
     }
@@ -276,15 +420,15 @@ void DownloadQueue::downloadShow(const ShowData &show, int startIndex, int endIn
 
     for (int i = startIndex; i <= endIndex; ++i) {
         auto task = QSharedPointer<DownloadTask>::create(playlist->at(i), show.provider, workDir);
-        if (QFile::exists(task->path) || m_ongoingPaths.contains(task->path)) {
-            logInfo() << "Downloader" << "Already exists or downloading" << task->path;
+        if (alreadyDownloaded(task->basePath()) || m_ongoingPaths.contains(task->basePath())) {
+            logInfo() << "Downloader" << "Already exists or downloading" << task->path();
             continue;
         }
         // Model signals must stay outside the lock - the workers take it too.
         beginInsertRows(QModelIndex(), m_tasks.size(), m_tasks.size());
         {
             QMutexLocker locker(&m_mutex);
-            m_ongoingPaths.insert(task->path);
+            m_ongoingPaths.insert(task->basePath());
             m_tasks.push_back(task);
             m_taskQueue.append(task);
         }
@@ -306,17 +450,26 @@ void DownloadQueue::runTask(QSharedPointer<DownloadTask> task) {
         if (task->link.isEmpty()) {
             { QMutexLocker locker(&m_mutex); m_currentConcurrentDownloads--; }
             QMetaObject::invokeMethod(this, [this, task]() {
-                task->setStatus(DownloadTask::Failed);
-                task->setProgressText("Extraction failed - press Retry");
-                emitRowChanged(rowOf(task));
+                if (task->isCancelled()) {
+                    removeTask(task, true);
+                } else {
+                    task->setStatus(DownloadTask::Failed);
+                    task->setProgressText("Extraction failed - press Retry");
+                    emitRowChanged(rowOf(task));
+                }
                 startTasks();
             }, Qt::QueuedConnection);
             return;
         }
     }
 
+    // Sets the container, so it must run before either argument builder reads subtitleFiles.
+    task->prepareSubtitles();
+    emitRowChanged(rowOf(task));
+
     const bool ffmpeg = task->usesFfmpeg();
     if (ffmpeg) QDir().mkpath(task->folder);   // N_m3u8DL-RE makes its save-dir; ffmpeg won't
+    else        QDir().mkpath(task->tmpDir());
 
     auto *process = new QProcess(nullptr);
     process->setProgram(task->program());
@@ -389,14 +542,21 @@ void DownloadQueue::runTask(QSharedPointer<DownloadTask> task) {
     // Promote the part file before anyone is told the download finished.
     if (ffmpeg) {
         if (succeeded) {
-            QFile::remove(task->path);
-            if (!QFile::rename(task->partPath(), task->path)) succeeded = false;
+            QFile::remove(task->path());
+            if (!QFile::rename(task->partPath(), task->path())) {
+                // The part file is the only copy now, so it outlives the failure.
+                logWarn() << "Downloader" << "Could not rename" << task->partPath() << "to" << task->path();
+                task->keepPart = true;
+                succeeded = false;
+            }
         }
-        if (!succeeded && !paused) QFile::remove(task->partPath());
+        if (!succeeded && !paused && !task->keepPart) QFile::remove(task->partPath());
+    } else if (succeeded) {
+        QDir(task->tmpDir()).removeRecursively();   // --del-after-done leaves the wrapper behind
     }
+    if (succeeded) task->discardSubtitles();
 
     {
-        // removeTask() calls state() on this pointer under the same lock.
         QMutexLocker locker(&m_mutex);
         m_currentConcurrentDownloads--;
         task->setProcess(nullptr);
@@ -405,7 +565,7 @@ void DownloadQueue::runTask(QSharedPointer<DownloadTask> task) {
 
     QMetaObject::invokeMethod(this, [this, task, succeeded, cancelled, paused]() {
         if (cancelled) {
-            removeTask(task);
+            removeTask(task, true);
         } else if (paused) {
             task->setPaused(false);
             task->setStatus(DownloadTask::Paused);
@@ -413,7 +573,7 @@ void DownloadQueue::runTask(QSharedPointer<DownloadTask> task) {
             emitRowChanged(rowOf(task));
         } else if (succeeded) {
             AppShell::instance().reportInfo(task->displayName, "Download Complete");
-            removeTask(task);
+            removeTask(task, true);
         } else {
             task->setStatus(DownloadTask::Failed);
             task->setProgressText("Failed - press Retry to resume");
@@ -423,28 +583,39 @@ void DownloadQueue::runTask(QSharedPointer<DownloadTask> task) {
     }, Qt::QueuedConnection);
 }
 
-void DownloadQueue::removeTask(const QSharedPointer<DownloadTask> &task) {
+void DownloadQueue::removeTask(const QSharedPointer<DownloadTask> &task, bool force) {
     // Main thread only.
     int idx;
+    bool workerOwnsIt;
     {
         QMutexLocker locker(&m_mutex);
         idx = m_tasks.indexOf(task);
         if (idx == -1) return;
-        if (auto *proc = task->process(); proc && proc->state() == QProcess::Running) {
-            // runTask calls removeTask again when the process exits.
+        // A queued task never reaches a worker, so dropping the row has to drop it here too.
+        m_taskQueue.removeOne(task);
+        // Running covers the extraction window, where there is no process to ask about yet.
+        workerOwnsIt = !force && task->status() == DownloadTask::Running;
+        if (workerOwnsIt) {
             logInfo() << "Downloader" << "Cancelling" << task->displayName;
             task->cancel();
             task->setProgressText("Cancelling");
-            return;
         }
     }
+    // runTask calls removeTask again when it unwinds.
+    if (workerOwnsIt) { emitRowChanged(idx); return; }
 
-    if (task->usesFfmpeg()) QFile::remove(task->partPath());
+    // Reached only once no worker owns the task, so touching its files is safe here.
+    if (task->usesFfmpeg()) {
+        if (!task->keepPart) QFile::remove(task->partPath());
+    } else {
+        QDir(task->tmpDir()).removeRecursively();
+    }
+    task->discardSubtitles();
 
     beginRemoveRows(QModelIndex(), idx, idx);
     {
         QMutexLocker locker(&m_mutex);
-        m_ongoingPaths.remove(task->path);
+        m_ongoingPaths.remove(task->basePath());
         m_tasks.removeAt(idx);
     }
     endRemoveRows();
@@ -495,6 +666,7 @@ void DownloadQueue::resumeTask(int index) {
         task = m_tasks[index];
         if (task->status() != DownloadTask::Paused && task->status() != DownloadTask::Failed) return;
         task->setPaused(false);
+        task->keepPart = false;
         task->setStatus(DownloadTask::Queued);
         if (!m_taskQueue.contains(task)) m_taskQueue.append(task);
     }

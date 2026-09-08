@@ -52,6 +52,7 @@ Application::Application(const QString &launchPath)
     new HlsProxy(this);
     DanmakuAss::pruneCache(Settings::tempDir() + QStringLiteral("/danmaku"));
     DanmakuAss::pruneCache(Settings::tempDir() + QStringLiteral("/subtitles"));
+    DanmakuAss::pruneCache(Settings::tempDir() + QStringLiteral("/downloadsubs"));
     m_libraryProxyModel.setSourceModel(&m_library);
 
     m_providers.setProviders({

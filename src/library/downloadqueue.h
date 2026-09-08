@@ -10,11 +10,13 @@
 #include <atomic>
 
 #include "net/canceltoken.h"
+#include "media/playinfo.h"
 #include <qqmlintegration.h>
 
 class ShowData;
 class PlaylistItem;
 class ShowProvider;
+class Client;
 
 class DownloadTask : public QObject {
     Q_OBJECT
@@ -31,24 +33,45 @@ public:
     enum Status { Queued, Running, Paused, Failed };
     Q_ENUM(Status)
 
+    struct SubtitleFile {
+        QString path;
+        QString lang;    // ISO code, or empty when the provider gave none
+        QString name;
+        bool    owned;   // we fetched it, so we delete it; a provider's own local file we never touch
+    };
+
     QString videoName;
     QString folder;
     QString link;
     QString audioLink;   // set when the source has a separate audio stream (e.g. Bilibili DASH)
     QMap<QString, QString> headers;
     QString displayName;
-    QString path;
     QString maxSpeed;   // read on the GUI thread in startTasks(); QSettings is not thread-safe
+    QList<SubtitleFile> subtitleFiles;
+
+    // The dedup key: extension-less, because the container is only known once extraction has run.
+    QString basePath() const { return QDir::cleanPath(folder + "/" + videoName); }
+    QString path() const     { return basePath() + (useMkv() ? ".mkv" : ".mp4"); }
+    // ffmpeg picks the container from this suffix, so it has to track path().
+    QString partPath() const { return basePath() + (useMkv() ? ".part.mkv" : ".part.mp4"); }
+    // Private scratch, so a cancelled download leaves nothing in the show folder.
+    QString tmpDir() const   { return basePath() + QStringLiteral(".tmp"); }
 
     QStringList toolArguments() const;
     // Separate video+audio (Bilibili) isn't a manifest N_m3u8DL-RE can take - ffmpeg muxes both.
     bool usesFfmpeg() const { return !audioLink.isEmpty(); }
-    // ffmpeg writes here and we rename on success; keep the .mp4 suffix, it picks the container from it.
-    QString partPath() const { return QDir::cleanPath(folder + "/" + videoName + ".part.mp4"); }
+    bool useMkv() const { return m_useMkv.load(std::memory_order_acquire); }
     QString program() const { return usesFfmpeg() ? ffmpegPath() : toolPath(); }
     QStringList ffmpegArguments() const;
     QString extractLink();   // empty on failure
     QString extractLinkInner();
+    // Worker thread, once per run, before the arguments are built: fixes the container so the
+    // argument list and path() can never disagree.
+    void prepareSubtitles();
+    void discardSubtitles();
+
+    // A rename that failed left the only copy in the .part file - don't delete it.
+    std::atomic<bool> keepPart{false};
 
     int progressValue() const { return m_progressValue; }
     QString progressText() const { return m_progressText; }
@@ -74,6 +97,7 @@ public:
 
 private:
     void rebuildStats();
+    void fetchSubtitles(Client &client, const QList<Track> &tracks);
     static QString formatEta(int seconds);
 
     static void ensurePaths() {
@@ -88,6 +112,7 @@ private:
 
     CancelToken       m_cancel;
     std::atomic<bool> m_isPaused{false};
+    std::atomic<bool> m_useMkv{false};
     std::atomic<int>  m_status{Queued};
     std::atomic<QProcess*> m_process{nullptr};
     int m_progressValue = 0;
@@ -143,7 +168,8 @@ signals:
 private:
     void startTasks();
     void runTask(QSharedPointer<DownloadTask> task);
-    void removeTask(const QSharedPointer<DownloadTask> &task);
+    // force: the worker has finished with the task, so drop the row instead of asking it to stop.
+    void removeTask(const QSharedPointer<DownloadTask> &task, bool force = false);
     void emitRowChanged(int row);   // safe from any thread
     int  rowOf(const QSharedPointer<DownloadTask> &task) const;
 
