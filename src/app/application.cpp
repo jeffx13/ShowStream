@@ -66,6 +66,8 @@ Application::Application(const QString &launchPath)
     });
     connect(&m_playlist, &Playlist::localProgressUpdated,
             &m_library,  &Library::updateLocalProgress);
+    connect(&m_playlist, &Playlist::localProgressStale,
+            &m_library,  &Library::forgetLocalProgress);
 
     if (!launchPath.isEmpty())
         m_playlist.openUrl(QUrl::fromUserInput(launchPath), false);

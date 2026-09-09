@@ -79,6 +79,7 @@ public:
     Q_SIGNAL void progressUpdated(QString link, int progressIndex, double progress) const;
     Q_SIGNAL void episodeStarted(QString link, int index) const;   // -> history
     Q_SIGNAL void localProgressUpdated(QString path, QString folder, double progress) const;
+    Q_SIGNAL void localProgressStale(QStringList paths) const;
 
 private:
     QSharedPointer<PlaylistItem> m_root = QSharedPointer<PlaylistItem>::create("root", nullptr, "/");

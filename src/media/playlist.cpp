@@ -897,7 +897,7 @@ void Playlist::openLocalPath(const QUrl &url, const QString &urlString, bool pla
     } else {
         playlist = QSharedPointer<PlaylistItem>::create();
         if (LocalMedia::loadFolder(url, playlist, [this](const QString &p) { return m_byLink.contains(p); }, 0, 5)) {
-        applyLocalResume(playlist);
+            applyLocalResume(playlist);
             append(playlist);
             logInfo() << "Playlist" << "Loaded folder" << dirPath;
         } else {
@@ -994,20 +994,25 @@ void Playlist::applyLocalResume(const QSharedPointer<PlaylistItem> &playlist) {
         const auto rows = m_localResume(node->link);
         if (rows.isEmpty()) return;
 
-        QHash<QString, double> byPath;
-        byPath.reserve(rows.size());
-        for (const auto &[path, progress] : rows) byPath.insert(path, progress);
+        QHash<QString, int> indexByPath;
+        const auto &children = node->children();
+        for (int i = 0; i < children.size(); ++i)
+            if (!children[i]->isList()) indexByPath.insert(children[i]->link, i);
+        // An empty listing proves nothing was deleted, only that nothing was read.
+        if (indexByPath.isEmpty()) return;
 
-        for (const auto &child : node->children()) {
-            if (child->isList()) continue;
-            if (const auto it = byPath.constFind(child->link); it != byPath.constEnd())
-                child->setProgress(*it);
+        QStringList stale;
+        int resumeIndex = -1;
+        for (const auto &[path, progress] : rows) {
+            const auto it = indexByPath.constFind(path);
+            if (it == indexByPath.constEnd()) { stale << path; continue; }
+            children[*it]->setProgress(progress);
+            if (resumeIndex < 0) resumeIndex = *it;   // rows are newest first
         }
-        // Row 0 is the most recent play; an explicitly opened file has already pinned the index.
-        if (node->currentIndex() == -1) {
-            const int idx = node->indexOf(rows.first().first);
-            if (idx >= 0) node->setCurrentIndex(idx);
-        }
+
+        // An explicitly opened file has already pinned the index.
+        if (node->currentIndex() == -1 && resumeIndex >= 0) node->setCurrentIndex(resumeIndex);
+        if (!stale.isEmpty()) emit localProgressStale(stale);
     });
 }
 

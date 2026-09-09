@@ -16,6 +16,10 @@
 
 namespace {
 
+// Shared with the trim below, so it can never drop a row HistoryPage would still show.
+constexpr int kHistoryRows = 100;
+constexpr int kLocalProgressRows = 2000;
+
 QString selectEntries(const char *whereClause) {
     return QLatin1String("SELECT link, title, cover, provider, library_type, last_watched_index, "
                          "total_episodes, show_type, progress FROM shows ")
@@ -197,9 +201,8 @@ void Library::initDatabase() {
 
     query.exec("CREATE INDEX IF NOT EXISTS idx_shows_library ON shows(library_type, sort_order)");
 
-    // Resume points for folders played off disk. Kept out of shows/history: those rows are
-    // provider-backed, and HistoryPage would try to reopen a file path through a provider that
-    // does not exist. Keyed by path, not by row, so adding or renaming a file moves nothing.
+    // Kept out of shows/history: those rows are provider-backed, and HistoryPage would try to
+    // reopen a file path through a provider that does not exist.
     query.exec(R"(
         CREATE TABLE IF NOT EXISTS local_progress (
             path TEXT PRIMARY KEY,
@@ -210,6 +213,34 @@ void Library::initDatabase() {
     )");
     query.exec("CREATE INDEX IF NOT EXISTS idx_local_progress_folder "
                "ON local_progress(folder, last_played_at)");
+
+    pruneDatabase();
+}
+
+// rowid, not the key: SQLite allows NULL in a TEXT PRIMARY KEY, and NOT IN over NULL matches
+// nothing at all.
+void Library::trimToNewest(const char *table, int limit) {
+    QSqlQuery query(m_db);
+    if (!query.exec(QString("DELETE FROM %1 WHERE rowid NOT IN "
+                            "(SELECT rowid FROM %1 ORDER BY last_played_at DESC LIMIT %2)")
+                        .arg(QLatin1String(table)).arg(limit)))
+        return;
+    if (const int removed = query.numRowsAffected(); removed > 0)
+        logInfo() << "Library" << "Dropped" << removed << "stale" << table << "rows";
+}
+
+void Library::pruneDatabase() {
+    trimToNewest("history", kHistoryRows);
+    trimToNewest("local_progress", kLocalProgressRows);
+
+    // Deleted pages are reused but never returned, and VACUUM rewrites the whole file - only
+    // worth it once the waste is.
+    const int freePages  = firstValue(m_db, "PRAGMA freelist_count").toInt();
+    const int totalPages = firstValue(m_db, "PRAGMA page_count").toInt();
+    if (freePages > 256 && freePages * 2 > totalPages) {
+        QSqlQuery vacuum(m_db);
+        if (vacuum.exec("VACUUM")) logInfo() << "Library" << "Compacted the database";
+    }
 }
 
 LibraryEntry Library::entryFromQuery(const QSqlQuery &query) {
@@ -277,9 +308,9 @@ bool Library::migrate(const QString &oldLink, const QString &newLink, const QStr
 
 QVariantList Library::history() const {
     QVariantList list;
-    QSqlQuery query = prepared(m_db, "SELECT link, title, cover, last_watched_index, "
-                                     "total_episodes, progress FROM history "
-                                     "ORDER BY last_played_at DESC LIMIT 100");
+    QSqlQuery query = prepared(m_db, QString("SELECT link, title, cover, last_watched_index, "
+                                             "total_episodes, progress FROM history "
+                                             "ORDER BY last_played_at DESC LIMIT %1").arg(kHistoryRows));
     if (!query.exec()) return list;
     while (query.next()) {
         const int lwi   = query.value(3).toInt();
@@ -485,6 +516,18 @@ void Library::updateLocalProgress(const QString &path, const QString &folder, do
         "                                last_played_at = excluded.last_played_at",
         {path, folder, qBound(0.0, progress, 1.0)});
     runQuery(query, "Failed to save local progress:");
+}
+
+void Library::forgetLocalProgress(const QStringList &paths) {
+    if (paths.isEmpty()) return;
+    QSqlQuery query(m_db);
+    query.prepare("DELETE FROM local_progress WHERE path = ?");
+    query.addBindValue(QVariantList(paths.cbegin(), paths.cend()));
+    if (!query.execBatch()) {
+        logError() << "Library" << "Failed to forget local progress:" << query.lastError().text();
+        return;
+    }
+    logInfo() << "Library" << "Forgot" << paths.size() << "deleted files";
 }
 
 void Library::cacheHistoryMeta(const QString &link, const QString &title,
