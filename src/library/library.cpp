@@ -196,6 +196,20 @@ void Library::initDatabase() {
             query.exec("ALTER TABLE " + table + " DROP COLUMN finished");
 
     query.exec("CREATE INDEX IF NOT EXISTS idx_shows_library ON shows(library_type, sort_order)");
+
+    // Resume points for folders played off disk. Kept out of shows/history: those rows are
+    // provider-backed, and HistoryPage would try to reopen a file path through a provider that
+    // does not exist. Keyed by path, not by row, so adding or renaming a file moves nothing.
+    query.exec(R"(
+        CREATE TABLE IF NOT EXISTS local_progress (
+            path TEXT PRIMARY KEY,
+            folder TEXT NOT NULL,
+            progress REAL DEFAULT 0,
+            last_played_at INTEGER DEFAULT 0
+        )
+    )");
+    query.exec("CREATE INDEX IF NOT EXISTS idx_local_progress_folder "
+               "ON local_progress(folder, last_played_at)");
 }
 
 LibraryEntry Library::entryFromQuery(const QSqlQuery &query) {
@@ -448,6 +462,29 @@ void Library::updateProgress(const QString &link, int lastWatchedIndex, double p
         e.progress = progress;
         emit dataChanged(index(idx), index(idx));
     }
+}
+
+QList<QPair<QString, double>> Library::localFolderProgress(const QString &folder) const {
+    QList<QPair<QString, double>> rows;
+    if (folder.isEmpty()) return rows;
+    // Most recent first, so the caller reads row 0 as the file to reopen on.
+    QSqlQuery query = prepared(m_db, "SELECT path, progress FROM local_progress WHERE folder = ? "
+                                     "ORDER BY last_played_at DESC, rowid DESC", {folder});
+    if (!runQuery(query, "Failed to read local progress:")) return rows;
+    while (query.next())
+        rows.append({query.value(0).toString(), qBound(0.0, query.value(1).toDouble(), 1.0)});
+    return rows;
+}
+
+void Library::updateLocalProgress(const QString &path, const QString &folder, double progress) {
+    if (path.isEmpty() || folder.isEmpty()) return;
+    QSqlQuery query = prepared(m_db,
+        "INSERT INTO local_progress (path, folder, progress, last_played_at) "
+        "VALUES (?, ?, ?, strftime('%s','now')) "
+        "ON CONFLICT(path) DO UPDATE SET folder = excluded.folder, progress = excluded.progress, "
+        "                                last_played_at = excluded.last_played_at",
+        {path, folder, qBound(0.0, progress, 1.0)});
+    runQuery(query, "Failed to save local progress:");
 }
 
 void Library::cacheHistoryMeta(const QString &link, const QString &title,

@@ -116,17 +116,6 @@ double PlaylistItem::progress() const {
     return (type & List) ? 0.0 : m_progress;
 }
 
-void PlaylistItem::updateHistoryFile() {
-    if (!historyFile || !isValidIndex(m_currentIndex)) return;
-    if (historyFile->open(QIODevice::WriteOnly | QIODevice::Truncate)) {
-        QTextStream stream(historyFile.data());
-        auto item = m_children.at(m_currentIndex);
-        stream << QFileInfo(item->link).fileName();
-        if (item->m_progress > 0)
-            stream << ":" << QString::number(item->m_progress, 'g', 8);
-        historyFile->close();
-    }
-}
 
 void PlaylistItem::updateRowIndices(int startIndex) {
     for (int i = startIndex; i < m_children.size(); ++i) {

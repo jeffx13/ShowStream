@@ -67,9 +67,6 @@ public:
     // Only meaningful for List nodes
     ShowProvider *provider() const { return m_provider; }
 
-    // Only used for Local|List nodes to remember last-played file
-    QScopedPointer<QFile> historyFile;
-    void updateHistoryFile();
 
 private:
     void updateRowIndices(int startIndex = 0);

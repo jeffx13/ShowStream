@@ -72,6 +72,7 @@ Item {
             cursorShape: Globals.pipMode || controlBar.visible ? Qt.ArrowCursor : Qt.BlankCursor
 
             onPressed: (mouse) => {
+                mpvPage.forceActiveFocus()   // clicking the video must restore the shortcuts
                 if (mouse.button === Qt.LeftButton && Globals.pipMode) {
                     pressPos = Qt.point(mouse.x, mouse.y)
                     pipDragging = false

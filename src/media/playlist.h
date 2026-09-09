@@ -45,7 +45,8 @@ public:
     Q_INVOKABLE void loadServer(int index);
     Q_INVOKABLE void tryNextServer();
     Q_INVOKABLE void showCurrentItemName() const;
-    Q_INVOKABLE void saveProgress() const;
+    // quiet: the periodic save, which must not put a line in the log every tick.
+    Q_INVOKABLE void saveProgress(bool quiet = false) const;
     Q_INVOKABLE void cancel();
     Q_INVOKABLE void openUrl(QUrl url, bool play);
 
@@ -68,10 +69,16 @@ public:
     // True while a play resolves (incl. the pending-restart window) - avoids spinner blink.
     bool isLoading() const { return m_watcher.isRunning() || m_pendingItem || m_pendingServerIndex >= 0; }
 
+    // folder -> (file path, progress), most recent first. Installed by Application so the
+    // playlist needs no Library pointer.
+    using LocalResumeLookup = std::function<QList<QPair<QString, double>>(const QString &)>;
+    void setLocalResumeLookup(LocalResumeLookup lookup) { m_localResume = std::move(lookup); }
+
     Q_SIGNAL void currentItemChanged(const QModelIndex &index);
     Q_SIGNAL void isLoadingChanged();
     Q_SIGNAL void progressUpdated(QString link, int progressIndex, double progress) const;
     Q_SIGNAL void episodeStarted(QString link, int index) const;   // -> history
+    Q_SIGNAL void localProgressUpdated(QString path, QString folder, double progress) const;
 
 private:
     QSharedPointer<PlaylistItem> m_root = QSharedPointer<PlaylistItem>::create("root", nullptr, "/");
@@ -84,6 +91,9 @@ private:
     QFutureWatcher<PlayInfo> m_watcher;
     QSharedPointer<PlaylistItem> m_pendingItem;
     int m_pendingServerIndex = -1;
+    LocalResumeLookup m_localResume;
+    qint64 m_lastProgressSaveMs = 0;
+    static constexpr qint64 kProgressSaveIntervalMs = 15'000;
     QSet<QString> m_autoTriedServers;   // servers auto-fallback already tried this episode
 
     CancelToken       m_appendCancel;
@@ -140,6 +150,9 @@ private:
 
     void registerPlaylist(const QSharedPointer<PlaylistItem> &playlist);
     void deregisterPlaylist(const QSharedPointer<PlaylistItem> &playlist);
+    // Resume points for a freshly built local tree, applied after loadFolder has sorted it.
+    void applyLocalResume(const QSharedPointer<PlaylistItem> &playlist);
+
     using PlaylistVisitor = std::function<void(const QSharedPointer<PlaylistItem> &)>;
     void visitListNodes(const QSharedPointer<PlaylistItem> &root, const PlaylistVisitor &visitor);
     ServerListModel *serverList() { return &m_serverListModel; }

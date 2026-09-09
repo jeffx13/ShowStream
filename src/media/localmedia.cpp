@@ -3,11 +3,9 @@
 #include "app/logger.h"
 #include <QClipboard>
 #include <QDir>
-#include <QFile>
 #include <QFileInfo>
 #include <QGuiApplication>
 #include <QRegularExpression>
-#include <QTextStream>
 
 namespace {
 
@@ -81,37 +79,12 @@ bool loadFolder(const QUrl &pathUrl, const QSharedPointer<PlaylistItem> &playlis
 
     if (fileEntries.isEmpty() && dirEntries.isEmpty()) return false;
 
-    playlist->historyFile.reset(new QFile(playlistDir.filePath(".mpv.history")));
-    QString fileToPlay;
-    double progress = 0;
-
-    if (playlist->historyFile->exists()) {
-        if (fileEntries.isEmpty()) {
-            playlist->historyFile->remove();
-        } else if (playlist->historyFile->open(QIODevice::ReadOnly | QIODevice::Text)) {
-            auto fileData = QTextStream(playlist->historyFile.data()).readAll().trimmed().split(":");
-            playlist->historyFile->close();
-            fileToPlay = fileData.first();
-            // Anything above 1 is a pre-fraction history file holding seconds; those are dropped.
-            if (fileData.size() == 2) {
-                const double stored = fileData.last().toDouble();
-                progress = stored > 1.0 ? 0.0 : stored;
-            }
-        } else {
-            logError() << "Playlist" << "Failed to open history file";
-        }
-    }
-
-    if (fileEntries.contains(pathInfo) && fileToPlay != pathInfo.fileName()) {
-        if (playlist->historyFile->open(QIODevice::WriteOnly | QIODevice::Text)) {
-            playlist->historyFile->write(pathInfo.fileName().toUtf8());
-            playlist->historyFile->close();
-            fileToPlay = pathInfo.fileName();
-            progress = 0;
-        } else {
-            logError() << "Playlist" << "Failed to open and update history file";
-        }
-    }
+    // Resume points live in library.db. clear() above dropped the children but kept the old
+    // index, which now points at nothing; only an explicitly opened file pins one here, and
+    // Playlist applies the stored positions once the tree is built and sorted.
+    playlist->setCurrentIndex(-1);
+    const QString requestedFile = (!pathInfo.isDir() && fileEntries.contains(pathInfo))
+                                      ? pathInfo.absoluteFilePath() : QString();
 
     static const QRegularExpression fileNameRegex{
         R"((?:[Ss](?<S>\d{1,2})[Ee](?<E>\d{1,3})[\s\-\.]*| (?<episode>\d{2,3}) ?[\s\-]*)(?<title>[^\(\)]+\w)?.*?\.\w{3,4}$)"};
@@ -144,10 +117,8 @@ bool loadFolder(const QUrl &pathUrl, const QSharedPointer<PlaylistItem> &playlis
 
         playlist->emplaceBack(season, episodeNumber, fileInfo.absoluteFilePath(), title, true);
 
-        if (fileInfo.fileName() == fileToPlay) {
+        if (!requestedFile.isEmpty() && fileInfo.absoluteFilePath() == requestedFile)
             playlist->setCurrentIndex(playlist->count() - 1);
-            playlist->last()->setProgress(progress);
-        }
     }
 
     if (curDepth + 1 < maxDepth) {

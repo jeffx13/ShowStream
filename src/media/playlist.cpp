@@ -451,6 +451,8 @@ void Playlist::setCurrentItem(const QSharedPointer<PlaylistItem> &item) {
     }
     m_currentItem = item;
     m_currentCompleted = false;        // new episode - completion re-evaluated from its position
+    // finalizePlayback has just stamped this item; don't let the periodic save fire immediately.
+    m_lastProgressSaveMs = QDateTime::currentMSecsSinceEpoch();
     ensureMpvProgressConnection();
 
     if (auto *mpv = MpvPlayer::instance()) {
@@ -490,7 +492,7 @@ void Playlist::showCurrentItemName() const {
     if (auto *mpv = MpvPlayer::instance()) mpv->showText(displayText);
 }
 
-void Playlist::saveProgress() const {
+void Playlist::saveProgress(bool quiet) const {
     auto currentItem = m_currentItem.toStrongRef();
     if (!currentItem || currentItem->preview) return;   // preview/trailer episodes get no resume point
     auto playlist = currentItem->parent();
@@ -502,13 +504,13 @@ void Playlist::saveProgress() const {
 
     const double duration = mpv->duration();
     const double progress = duration > 0 ? qBound(0.0, mpv->time() / duration, 1.0) : 0.0;
-    logInfo() << "Playlist" << playlist->name << "Saving | Index =" << row
-           << "| Progress =" << QString::number(progress * 100, 'f', 1) + "%";
+    if (!quiet)
+        logInfo() << "Playlist" << playlist->name << "Saving | Index =" << row
+               << "| Progress =" << QString::number(progress * 100, 'f', 1) + "%";
 
-    auto currentPlaylistItem = playlist->currentItem();
-    if (!currentPlaylistItem) return;
-    currentPlaylistItem->setProgress(progress);
-    playlist->updateHistoryFile();
+    currentItem->setProgress(progress);
+    if (playlist->isLocalDir())
+        emit localProgressUpdated(currentItem->link, playlist->link, progress);
     emit progressUpdated(playlist->link, row, progress);
 }
 
@@ -532,6 +534,16 @@ void Playlist::onPlaybackProgress() {
     if (duration <= 0) return;
     const double progress = qBound(0.0, mpv->time() / duration, 1.0);
     const bool completed = progress >= Settings::instance().watchedFraction();
+
+    // No timer needed: timeChanged already ticks about once a second and stops while paused.
+    const qint64 now = QDateTime::currentMSecsSinceEpoch();
+    if (now - m_lastProgressSaveMs >= kProgressSaveIntervalMs) {
+        m_lastProgressSaveMs = now;
+        m_currentCompleted = completed;
+        saveProgress(true);
+        return;
+    }
+
     if (completed == m_currentCompleted) return;   // only act on a threshold crossing
     m_currentCompleted = completed;
     currentItem->setProgress(progress);
@@ -831,10 +843,8 @@ void Playlist::finalizePlayback(const QSharedPointer<PlaylistItem> &item) {
         if (!playlist) return;  // item may have been removed on main thread
 
         int itemRow = item->row();
-        if (playlist->currentIndex() != itemRow) {
+        if (playlist->currentIndex() != itemRow)
             playlist->setCurrentIndex(itemRow);
-            playlist->updateHistoryFile();
-        }
         int row = playlist->row();
         auto parent = playlist->parent();
         while (parent) {
@@ -844,6 +854,8 @@ void Playlist::finalizePlayback(const QSharedPointer<PlaylistItem> &item) {
         }
         if (!item->preview) {
             // Duration is not known yet, so carry the stored fraction rather than resetting it to 0.
+            if (playlist->isLocalDir())
+                emit localProgressUpdated(item->link, playlist->link, item->progress());
             emit progressUpdated(playlist->link, itemRow, item->progress());
             emit episodeStarted(playlist->link, itemRow);
         }
@@ -885,6 +897,7 @@ void Playlist::openLocalPath(const QUrl &url, const QString &urlString, bool pla
     } else {
         playlist = QSharedPointer<PlaylistItem>::create();
         if (LocalMedia::loadFolder(url, playlist, [this](const QString &p) { return m_byLink.contains(p); }, 0, 5)) {
+        applyLocalResume(playlist);
             append(playlist);
             logInfo() << "Playlist" << "Loaded folder" << dirPath;
         } else {
@@ -930,12 +943,13 @@ void Playlist::onLocalDirectoryChanged(const QString &path) {
         logError() << "Playlist" << "Untracked path" << path;
         return;
     }
-    playlist->updateHistoryFile();
-
     auto currentItem = m_currentItem.toStrongRef();
     auto currentParent = currentItem ? currentItem->parent() : nullptr;
     bool isCurrentPlaylist = currentParent == playlist;
     QString prevLink = isCurrentPlaylist ? currentItem->link : "";
+
+    // The rebuild drops every in-memory position, so persist the live one first.
+    if (isCurrentPlaylist) saveProgress(true);
 
     logInfo() << "Playlist" << "Directory" << path << "has changed";
     deregisterPlaylist(playlist);
@@ -943,15 +957,21 @@ void Playlist::onLocalDirectoryChanged(const QString &path) {
     beginResetModel();
     const bool loaded = LocalMedia::loadFolder(QUrl::fromLocalFile(path), playlist,
                                                 [this](const QString &p) { return m_byLink.contains(p); });
+    if (loaded) applyLocalResume(playlist);
     endResetModel();
     if (loaded) {
         registerPlaylist(playlist);
         if (isCurrentPlaylist) {
-            auto newCurrentItem = playlist->currentItem();
-            setCurrentItem(newCurrentItem);
-            auto currentLink = newCurrentItem ? newCurrentItem->link : "";
-            if (currentLink != prevLink)
-                tryPlay(newCurrentItem);
+            // Re-pin by link: a rescan must never move the current item while its file still
+            // exists, whatever the stored resume point says.
+            const int idx = prevLink.isEmpty() ? -1 : playlist->indexOf(prevLink);
+            if (idx >= 0) {
+                playlist->setCurrentIndex(idx);
+                setCurrentItem(playlist->at(idx));
+            } else {
+                setCurrentItem(playlist->currentItem());
+                tryPlay(playlist);
+            }
         }
         return;
     }
@@ -965,6 +985,30 @@ void Playlist::onLocalDirectoryChanged(const QString &path) {
     parent->removeOne(playlist);
     endRemoveRows();
     setCurrentItem(m_currentItem.toStrongRef());
+}
+
+void Playlist::applyLocalResume(const QSharedPointer<PlaylistItem> &playlist) {
+    if (!m_localResume || !playlist) return;
+    visitListNodes(playlist, [this](const QSharedPointer<PlaylistItem> &node) {
+        if (!node->isLocalDir()) return;
+        const auto rows = m_localResume(node->link);
+        if (rows.isEmpty()) return;
+
+        QHash<QString, double> byPath;
+        byPath.reserve(rows.size());
+        for (const auto &[path, progress] : rows) byPath.insert(path, progress);
+
+        for (const auto &child : node->children()) {
+            if (child->isList()) continue;
+            if (const auto it = byPath.constFind(child->link); it != byPath.constEnd())
+                child->setProgress(*it);
+        }
+        // Row 0 is the most recent play; an explicitly opened file has already pinned the index.
+        if (node->currentIndex() == -1) {
+            const int idx = node->indexOf(rows.first().first);
+            if (idx >= 0) node->setCurrentIndex(idx);
+        }
+    });
 }
 
 void Playlist::visitListNodes(const QSharedPointer<PlaylistItem> &root, const PlaylistVisitor &visitor) {

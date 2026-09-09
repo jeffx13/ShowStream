@@ -85,6 +85,11 @@ public:
     };
     HistoryRow historyEntry(const QString &link) const;
 
+    // Resume points for local files, keyed by absolute path. Rows come back most recent first,
+    // so row 0 is the file a folder should reopen on.
+    QList<QPair<QString, double>> localFolderProgress(const QString &folder) const;
+    void updateLocalProgress(const QString &path, const QString &folder, double progress);
+
     Q_INVOKABLE bool add(const ShowData &show, int libraryType);
     Q_INVOKABLE void removeAt(int index, int libraryType = -1);
     Q_INVOKABLE void remove(const QString &link);

@@ -730,31 +730,95 @@ static QUrl externalTrackUrl(const QString &raw) {
     return QUrl::fromLocalFile(QDir::fromNativeSeparators(raw));
 }
 
-static QString trackLabel(bool isVideo, const QString &title, const QString &lang, int64_t id,
-                          int64_t w, int64_t h, double fps, int64_t bitrate) {
+struct TrackInfo {
+    QString type;                 // "video" | "audio" | "sub"
+    int64_t id = -1;
+    QString title, lang, codec;
+    QUrl    url;                  // external-filename, when mpv autoloaded a sidecar
+    int64_t w = 0, h = 0;
+    int64_t channels = 0, bitrate = 0;
+    double  fps = 0.0;
+};
+
+QString prettyCodec(const QString &codec) {
+    if (codec.isEmpty()) return {};
+    static const QMap<QString, QString> names{
+        {"aac", "AAC"},   {"ac3", "AC3"},   {"eac3", "E-AC3"}, {"truehd", "TrueHD"},
+        {"dts", "DTS"},   {"opus", "Opus"}, {"vorbis", "Vorbis"}, {"flac", "FLAC"},
+        {"mp3", "MP3"},   {"subrip", "SRT"}, {"ass", "ASS"},   {"ssa", "SSA"},
+        {"webvtt", "WebVTT"}, {"hdmv_pgs_subtitle", "PGS"}, {"dvd_subtitle", "VobSub"},
+        {"mov_text", "Text"},
+    };
+    if (const QString name = names.value(codec.toLower()); !name.isEmpty()) return name;
+    if (codec.startsWith(QLatin1String("pcm"), Qt::CaseInsensitive)) return QStringLiteral("PCM");
+    return codec.toUpper();
+}
+
+QString channelLayout(int64_t channels) {
+    switch (channels) {
+    case 0:  return {};
+    case 1:  return QStringLiteral("mono");
+    case 2:  return QStringLiteral("stereo");
+    case 6:  return QStringLiteral("5.1");
+    case 8:  return QStringLiteral("7.1");
+    default: return QString("%1 ch").arg(channels);
+    }
+}
+
+// sub-auto=fuzzy and audio-file-auto=fuzzy pull in sidecar files that carry no title and no
+// language, so their filename is the only thing that identifies them.
+QString externalBaseName(const QUrl &url) {
+    if (url.isEmpty()) return {};
+    return QFileInfo(url.isLocalFile() ? url.toLocalFile() : url.path()).completeBaseName();
+}
+
+QString trackLabel(const TrackInfo &t) {
+    const bool isVideo = t.type == QLatin1String("video");
+    const QString name = !t.title.isEmpty() ? t.title : externalBaseName(t.url);
     QString label;
+
     if (isVideo) {
         QString resolution;
-        if (w > 0 && h > 0) {
-            resolution = QString("%1x%2").arg(w).arg(h);
-            if (fps > 0) resolution += QString(" %1FPS").arg(fps);
+        if (t.w > 0 && t.h > 0) {
+            resolution = QString("%1x%2").arg(t.w).arg(t.h);
+            if (t.fps > 0) resolution += QString(" %1FPS").arg(t.fps);
         }
-        label = (!title.isEmpty() && !resolution.isEmpty()) ? QString("%1 [%2]").arg(title, resolution)
-              : title.isEmpty()                             ? resolution
-                                                            : title;
-        if (!lang.isEmpty())
-            label = label.isEmpty() ? lang : QString("%1 (%2)").arg(label, lang);
-    } else {
-        label = (!title.isEmpty() && !lang.isEmpty()) ? QString("%1 [%2]").arg(title, lang)
-              : title.isEmpty()                       ? lang
-                                                      : title;
+        if (resolution.isEmpty()) resolution = prettyCodec(t.codec);
+        label = (!name.isEmpty() && !resolution.isEmpty()) ? QString("%1 [%2]").arg(name, resolution)
+              : name.isEmpty()                             ? resolution
+                                                           : name;
+        if (!t.lang.isEmpty())
+            label = label.isEmpty() ? t.lang : QString("%1 (%2)").arg(label, t.lang);
+        if (t.bitrate > 0) {
+            if (!label.isEmpty()) label += " - ";
+            label += QString("%1 kbps").arg(t.bitrate / 1000);
+        }
+        return label.isEmpty() ? QString("Video %1").arg(t.id) : label;
     }
 
-    if (bitrate > 0) {
-        if (!label.isEmpty()) label += " - ";
-        label += QString("%1 kbps").arg(bitrate / 1000);
+    if (!name.isEmpty()) {
+        label = (t.lang.isEmpty() || name.compare(t.lang, Qt::CaseInsensitive) == 0)
+                    ? name : QString("%1 [%2]").arg(name, t.lang);
+    } else {
+        // Nothing named it, so say what it is: "AAC stereo", "WebVTT".
+        QStringList parts;
+        if (const QString codec = prettyCodec(t.codec); !codec.isEmpty()) parts << codec;
+        if (t.type == QLatin1String("audio"))
+            if (const QString channels = channelLayout(t.channels); !channels.isEmpty()) parts << channels;
+        const QString description = parts.join(QChar(' '));
+        label = t.lang.isEmpty()       ? description
+              : description.isEmpty()  ? t.lang
+                                       : QString("%1 - %2").arg(t.lang, description);
     }
-    return label.isEmpty() ? QString("Track %1").arg(id) : label;
+
+    // Subtitle bitrates are noise; only audio gets one.
+    if (t.type == QLatin1String("audio") && t.bitrate > 0) {
+        if (!label.isEmpty()) label += " - ";
+        label += QString("%1 kbps").arg(t.bitrate / 1000);
+    }
+    if (!label.isEmpty()) return label;
+    return t.type == QLatin1String("audio") ? QString("Audio %1").arg(t.id)
+                                            : QString("Subtitle %1").arg(t.id);
 }
 
 void MpvPlayer::parseTrackList(const Mpv::Node &trackList) {
@@ -769,10 +833,10 @@ void MpvPlayer::parseTrackList(const Mpv::Node &trackList) {
             else continue;
 
             int64_t id = -1;
-            QString title, lang;
+            QString title, lang, codec;
             QUrl url;
             double fps = 0.0;
-            int64_t bitrate = 0, w = 0, h = 0;
+            int64_t bitrate = 0, w = 0, h = 0, channels = 0;
 
             auto map = track.list();
             for (int i = 0; i < map->num; i++) {
@@ -796,6 +860,10 @@ void MpvPlayer::parseTrackList(const Mpv::Node &trackList) {
                     w = v.u.int64;
                 else if (strcmp(key, "demux-h") == 0 && v.format == MPV_FORMAT_INT64)
                     h = v.u.int64;
+                else if (strcmp(key, "codec") == 0 && v.format == MPV_FORMAT_STRING)
+                    codec = QString::fromUtf8(v.u.string);
+                else if (strcmp(key, "demux-channel-count") == 0 && v.format == MPV_FORMAT_INT64)
+                    channels = v.u.int64;
             }
 
             if (id <= 0) continue;
@@ -820,16 +888,32 @@ void MpvPlayer::parseTrackList(const Mpv::Node &trackList) {
 
             listModel->setStats(id, static_cast<int>(h), fps, static_cast<int>(bitrate));
 
-            if (listModel->indexForId(id) >= 0 && listModel->hasTitle(id))
-                continue;
+            // mpv names an untitled sidecar after the part of its filename the video does not
+            // share - "srt" for Clip.srt, "eng.srt" for Clip.eng.srt. The extension carries no
+            // meaning, so drop it; a title that was only the extension leaves nothing, and the
+            // label then falls back to the filename and stays refreshable.
+            if (!url.isEmpty() && !title.isEmpty()) {
+                const QString suffix =
+                    QFileInfo(url.isLocalFile() ? url.toLocalFile() : url.path()).suffix();
+                if (!suffix.isEmpty()) {
+                    if (title.compare(suffix, Qt::CaseInsensitive) == 0)
+                        title.clear();
+                    else if (title.endsWith(QLatin1Char('.') + suffix, Qt::CaseInsensitive))
+                        title.chop(suffix.size() + 1);
+                }
+            }
 
-            const QString label = trackLabel(trackType == "video", title, lang, id, w, h, fps, bitrate);
+            const TrackInfo info{trackType, id, title, lang, codec, url, w, h, channels, bitrate, fps};
+            const bool derived = title.isEmpty();   // nothing authoritative to preserve
+            const QString label = trackLabel(info);
 
-            if (listModel->indexForId(id) >= 0) {
-                listModel->updateById(id, label);
-            } else {
-                listModel->append(id, label);
+            const int row = listModel->indexForId(id);
+            if (row < 0) {
+                listModel->append(id, label, lang, derived);
                 listModel->setStats(id, static_cast<int>(h), fps, static_cast<int>(bitrate));
+            } else if (!listModel->hasFinalTitle(id)) {
+                // Derived: refresh it, since mpv may have measured the bitrate since.
+                listModel->updateById(id, label, derived);
             }
 
         } catch (const std::exception &e) {
@@ -1072,12 +1156,20 @@ void MpvPlayer::saveTrackPrefs() {
     const QString key = QStringLiteral("tracks/") + m_showKey;
     const QStringList saved = Settings::instance().value(key).toString().split(QChar(0x1f));
     // A fetched subtitle is not in the track model; its empty title would wipe the saved one.
+    // A derived label is not a key either - it changes as mpv measures the stream - so it is
+    // stored empty and the index below carries the selection.
     auto subTitle = [&](int field, int index, qint64 id) {
         if (!pathForSubId(id).isEmpty()) return saved.value(field);
         const Track *track = m_subtitleListModel.at(index);
-        return track ? track->title : QString();
+        if (!track) return QString();
+        return m_subtitleListModel.isDerivedTitle(m_subtitleListModel.idForIndex(index))
+                   ? QString() : track->title;
     };
-    const Track *aud = m_audioListModel.at(m_audioListModel.currentIndex());
+    const int audIdx = m_audioListModel.currentIndex();
+    const Track *aud = m_audioListModel.at(audIdx);
+    const QString audTitle =
+        (aud && !m_audioListModel.isDerivedTitle(m_audioListModel.idForIndex(audIdx)))
+            ? aud->title : QString();
 
     const QList<int> heights = m_videoListModel.heights();
     int vidIdx = m_videoListModel.currentIndex();
@@ -1088,12 +1180,15 @@ void MpvPlayer::saveTrackPrefs() {
 
     const QStringList parts = {
         subTitle(0, m_subtitleListModel.currentIndex(), m_primarySubId),
-        aud ? aud->title : QString(),
+        audTitle,
         m_subVisible ? QStringLiteral("1") : QStringLiteral("0"),
         QString::number(vidRes),
         QString::number(vidWithin),
-        QString::number(m_audioListModel.currentIndex()),
+        QString::number(audIdx),
         subTitle(6, m_subtitleListModel.secondaryIndex(), m_secondarySubId),
+        // Field 7: the subtitle's index, so an untitled track still restores. Readers guard on
+        // size, so appending stays compatible with strings written by older builds.
+        QString::number(m_subtitleListModel.currentIndex()),
     };
     Settings::instance().setValue(key, parts.join(QChar(0x1f)));
 }
@@ -1161,10 +1256,18 @@ void MpvPlayer::restoreTrackPrefs() {
 
     if (!m_subRestored && p.size() >= 3) {
         m_applyingTrackPrefs = true;
-        bool subFound = p[0].isEmpty();
-        if (!p[0].isEmpty())
+        bool subFound = false;
+        if (!p[0].isEmpty()) {
             for (int i = 0; i < m_subtitleListModel.count(); ++i)
                 if (m_subtitleListModel.at(i)->title == p[0]) { setSubIndex(i); subFound = true; break; }
+        } else if (p.size() >= 8) {
+            // No title to match on, so the index is the selection.
+            const int idx = p[7].toInt();
+            if (idx >= 0 && idx < m_subtitleListModel.count()) { setSubIndex(idx); }
+            subFound = true;
+        } else {
+            subFound = true;   // nothing was saved
+        }
         if (p.size() >= 7 && !p[6].isEmpty())
             for (int i = 0; i < m_subtitleListModel.count(); ++i)
                 if (m_subtitleListModel.at(i)->title == p[6]) { setSecondarySub(m_subtitleListModel.idForIndex(i)); break; }

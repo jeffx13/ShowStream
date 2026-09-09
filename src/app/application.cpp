@@ -60,6 +60,13 @@ Application::Application(const QString &launchPath)
         new AllAnime(this), new Duboku(this), new PStream(this), new Miruro(this),
     });
 
+    // Installed before the launch path opens, or that folder builds with no resume points.
+    m_playlist.setLocalResumeLookup([this](const QString &folder) {
+        return m_library.localFolderProgress(folder);
+    });
+    connect(&m_playlist, &Playlist::localProgressUpdated,
+            &m_library,  &Library::updateLocalProgress);
+
     if (!launchPath.isEmpty())
         m_playlist.openUrl(QUrl::fromUserInput(launchPath), false);
 

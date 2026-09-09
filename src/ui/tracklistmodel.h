@@ -59,9 +59,16 @@ public:
         if (id == m_currentId) setCurrentIndex(idx);
     }
 
-    bool hasTitle(int64_t id) const {
+    // A label we built from stream properties can be refreshed as mpv learns more; a title from
+    // the container or the provider is final and must never be overwritten.
+    bool hasFinalTitle(int64_t id) const {
         int idx = indexForId(id);
-        return idx >= 0 && !m_tracks[idx].title.isEmpty();
+        return idx >= 0 && !m_tracks[idx].title.isEmpty() && !m_derived.value(idx, false);
+    }
+
+    bool isDerivedTitle(int64_t id) const {
+        int idx = indexForId(id);
+        return idx >= 0 && m_derived.value(idx, false);
     }
 
     // False if the url is already present.
@@ -72,6 +79,7 @@ public:
         Track t(url, title, lang);
         t.height = height;
         m_tracks.append(t);
+        m_derived.append(title.isEmpty());
         int64_t syntheticId = row + 1;  // Provisional; overwritten by setId when mpv reports it
         m_indexToId[row] = syntheticId;
         m_idToIndex[syntheticId] = row;
@@ -82,10 +90,11 @@ public:
         return true;
     }
 
-    void append(int64_t id, const QString &title, const QString &lang = "") {
+    void append(int64_t id, const QString &title, const QString &lang = "", bool derived = false) {
         int row = m_tracks.size();
         beginInsertRows(QModelIndex(), row, row);
         m_tracks.append(Track(QUrl(), title, lang));
+        m_derived.append(derived);
         m_indexToId[row] = id;
         m_idToIndex[id] = row;
         endInsertRows();
@@ -93,9 +102,12 @@ public:
         if (id == m_currentId) setCurrentIndex(row);
     }
 
-    void updateById(int64_t id, const QString &title) {
+    void updateById(int64_t id, const QString &title, bool derived = false) {
         int idx = indexForId(id);
         if (idx < 0) return;
+        // track-list fires repeatedly; without this the view churns once a second.
+        if (m_tracks[idx].title == title && m_derived.value(idx, false) == derived) return;
+        m_derived[idx] = derived;
         m_tracks[idx].title = title;
         auto modelIdx = index(idx);
         emit dataChanged(modelIdx, modelIdx);
@@ -130,19 +142,23 @@ public:
         const int64_t secId = idForIndex(m_secondaryIndex);
         beginResetModel();
         QList<Track> tracks;
+        QList<bool> derived;
         QMap<int, int64_t> indexToId;
         QMap<int64_t, int> idToIndex;
         QMap<QUrl, int> urlToIndex;
         tracks.reserve(m_tracks.size());
+        derived.reserve(m_derived.size());
         for (int row = 0; row < order.size(); ++row) {
             const int old = order[row];
             tracks.append(m_tracks[old]);
+            derived.append(m_derived.value(old, false));
             const int64_t id = m_indexToId.value(old, -1);
             indexToId[row] = id;
             idToIndex[id] = row;
             if (!m_tracks[old].url.isEmpty()) urlToIndex[m_tracks[old].url] = row;
         }
         m_tracks = tracks;
+        m_derived = derived;
         m_indexToId = indexToId;
         m_idToIndex = idToIndex;
         m_urlToIndex = urlToIndex;
@@ -164,6 +180,7 @@ public:
     void clear() {
         beginResetModel();
         m_tracks.clear();
+        m_derived.clear();
         m_urlToIndex.clear();
         m_indexToId.clear();
         m_idToIndex.clear();
@@ -198,6 +215,7 @@ signals:
 
 private:
     QList<Track> m_tracks;
+    QList<bool>  m_derived;   // parallel to m_tracks: was this title generated, not given?
     int m_currentIndex = -1;
     int m_secondaryIndex = -1;
     int64_t m_currentId = -1;   // desired selection; its track may be added after mpv reports it

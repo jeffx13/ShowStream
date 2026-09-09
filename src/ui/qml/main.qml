@@ -143,6 +143,7 @@ ApplicationWindow {
         Globals.root = root
 
         if (App.playlist.playAt(0)) {
+            root.requestActivate()
             Globals.page = AppShell.Player
             history = [AppShell.Player]
         } else if (!App.explorer.isLoading && App.explorer.count === 0) {
@@ -169,10 +170,8 @@ ApplicationWindow {
         if (Globals.fullscreen || Globals.page === page) return
         if (page === AppShell.Info && !App.show.exists) return
 
-        if (page === AppShell.Player) {
+        if (page === AppShell.Player)
             Globals.mpv.peek(2000)
-            mpvPage.forceActiveFocus()
-        }
 
         Globals.page = page
         if (!isHistory) {
@@ -189,6 +188,13 @@ ApplicationWindow {
         if (at < 0 || at >= history.length) return
         historyIndex = at
         gotoPage(history[at], true)
+    }
+
+    Connections {
+        target: Globals
+        // Deferred: the target Loader activates and mpvPage's `enabled` flips in this same pass,
+        // and a disabled item cannot take focus.
+        function onPageChanged() { Qt.callLater(root.focusCurrentPage) }
     }
 
     function focusCurrentPage() {
