@@ -18,6 +18,7 @@ private:
     int loadShow(Client *client, ShowData &show, LoadParts parts) const override;
 
     QList<ShowData> parseShowList(const QString &html);
+    void            loadDetails(Client *client, ShowData &show, const QString &watchUrl) const;
     PlayInfo        extractEmbed(Client *client, const QString &embedUrl, const VideoServer &server) const;
 
     QMap<QString, QString> m_headers = {

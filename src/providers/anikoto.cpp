@@ -1,5 +1,6 @@
 #include "providers/anikoto.h"
 #include <QUrl>
+#include <QDateTime>
 #include <QRegularExpression>
 #include <QJsonArray>
 #include "net/hlsproxy.h"
@@ -66,24 +67,46 @@ int Anikoto::loadShow(Client *client, ShowData &show, LoadParts parts) const {
     }
 
     if (parts.testFlag(Details)) {
+        // The tooltip's synopsis is truncated server-side ("...using..."), so it is fetched only to
+        // map the numeric id to its slug; the watch page carries the full text and richer metadata.
         auto tip = Html::parse(client->get(hostUrl() + "ajax/anime/tooltip/" + show.link, m_headers).body);
-        if (tip) {
-            auto syn = tip.selectFirst("//div[contains(@class,'synopsis')]");
-            if (syn) show.description = syn.text().simplified();
-            auto status = tip.selectFirst("//div[span[contains(text(),'Status')]]/span[2]");
-            if (status) show.status = status.text().simplified();
-            auto year = tip.selectFirst("//div[span[contains(text(),'Year')]]/span[2]");
-            if (year) show.releaseDate = year.text().simplified();
-            auto score = tip.selectFirst("//div[span[contains(text(),'Scores')]]/span[2]");
-            if (score) show.score = score.text().simplified();
-            auto genreLinks = tip.select("//div[span[contains(text(),'Genre')]]//a");
-            for (const auto &g : std::as_const(genreLinks)) {
-                QString gt = g.text().simplified();
-                if (!gt.isEmpty()) show.genres.push_back(gt);
-            }
-        }
+        auto watchLink = tip ? tip.selectFirst("//div[contains(@class,'actions')]//a[contains(@class,'watch')]")
+                             : Html::Node{};
+        if (const QString watchUrl = watchLink ? watchLink.attr("href") : QString(); !watchUrl.isEmpty())
+            loadDetails(client, show, watchUrl);
     }
     return eps.size();
+}
+
+// Rows under .bmeta read "<label>: <span>value</span>".
+static QString metaField(const Html &page, const char *label) {
+    auto node = page.selectFirst(QStringLiteral("//div[contains(@class,'bmeta')]//div[contains(text(),'%1')]/span")
+                                     .arg(QLatin1String(label)));
+    return node ? node.text().simplified() : QString();
+}
+
+void Anikoto::loadDetails(Client *client, ShowData &show, const QString &watchUrl) const {
+    auto page = Html::parse(client->get(watchUrl, m_headers).body);
+    if (!page) return;
+
+    if (auto synopsis = page.selectFirst("//div[contains(@class,'synopsis')]//div[contains(@class,'content')]"))
+        show.description = synopsis.text().simplified();
+
+    show.status      = metaField(page, "Status");
+    show.releaseDate = metaField(page, "Aired");
+    show.score       = metaField(page, "MAL");
+
+    const auto genreLinks = page.select("//div[contains(@class,'bmeta')]//div[contains(text(),'Genres')]/span/a");
+    for (const auto &genre : genreLinks) {
+        const QString name = genre.text().simplified();
+        if (!name.isEmpty()) show.genres.push_back(name);
+    }
+
+    // The banner spells the date out in GMT; its countdown carries the same instant as an epoch.
+    if (auto countdown = page.selectFirst("//div[contains(@class,'next-episode')]//span[@data-target]")) {
+        if (const qint64 epoch = countdown.attr("data-target").toLongLong(); epoch > 0)
+            show.updateTime = QDateTime::fromSecsSinceEpoch(epoch).toString("ddd d MMM 'at' HH:mm");
+    }
 }
 
 QList<VideoServer> Anikoto::loadServers(Client *client, const PlaylistItem *episode) const {
