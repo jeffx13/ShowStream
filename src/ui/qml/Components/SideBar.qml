@@ -41,8 +41,6 @@ Rectangle {
         id: si
         property int page: 0
         property string icon: ""
-        property string selectedIcon: ""
-        property string svgIcon: ""     // when set, render an AppIcon instead of the PNG pair
         property string label: ""
         property bool needsShow: false
         width: parent ? parent.width : 0
@@ -61,23 +59,14 @@ Rectangle {
             border.width: si.isSelected ? 1 : 0
             Behavior on color { ColorAnimation { duration: 140 } }
         }
-        Image {
-            visible: si.svgIcon === ""
-            source: si.svgIcon === "" ? "qrc:/AoNami/resources/images/" + (si.isSelected ? si.selectedIcon : si.icon) + ".png" : ""
-            width: 38; height: 38
-            fillMode: Image.PreserveAspectFit
+        SideBarIcon {
+            glyph: si.icon
+            active: si.isSelected
+            size: 34
             x: (sideBar.rail - width) / 2
             anchors.verticalCenter: parent.verticalCenter
             opacity: si.isEnabled ? 1.0 : 0.35
-        }
-        AppIcon {
-            visible: si.svgIcon !== ""
-            name: si.svgIcon
-            size: 27
-            color: si.isSelected ? Theme.accent : Theme.textSecondary
-            x: (sideBar.rail - width) / 2
-            anchors.verticalCenter: parent.verticalCenter
-            opacity: si.isEnabled ? 1.0 : 0.35
+            Behavior on opacity { NumberAnimation { duration: 140 } }
         }
         Text {
             anchors { left: parent.left; leftMargin: sideBar.rail; right: parent.right; rightMargin: 10; verticalCenter: parent.verticalCenter }
@@ -130,18 +119,18 @@ Rectangle {
             }
         }
 
-        SideItem { page: AppShell.Search;   icon: "search";   selectedIcon: "search_selected";   label: "Explore" }
-        SideItem { page: AppShell.Info;     icon: "details";  selectedIcon: "details_selected";  label: "Details"; needsShow: true }
-        SideItem { page: AppShell.Library;  icon: "library";  selectedIcon: "library_selected";  label: "Library" }
-        SideItem { page: AppShell.Player;   icon: "tv";       selectedIcon: "tv_selected";       label: "Player" }
-        SideItem { page: AppShell.Download; icon: "download"; selectedIcon: "download_selected"; label: "Downloads" }
+        SideItem { page: AppShell.Search;   icon: "search";     label: "Explore" }
+        SideItem { page: AppShell.Info;     icon: "star";       label: "Details"; needsShow: true }
+        SideItem { page: AppShell.Library;  icon: "list-video"; label: "Library" }
+        SideItem { page: AppShell.Player;   icon: "tv";         label: "Player" }
+        SideItem { page: AppShell.Download; icon: "download";   label: "Downloads" }
     }
 
     Column {
         anchors { left: parent.left; right: parent.right; bottom: parent.bottom; bottomMargin: 10 }
         spacing: 2
-        SideItem { page: AppShell.History;  svgIcon: "history"; label: "History" }
-        SideItem { page: AppShell.Log;      icon: "log";      selectedIcon: "log_selected";      label: "Logs" }
-        SideItem { page: AppShell.Settings; icon: "settings"; selectedIcon: "settings_selected"; label: "Settings" }
+        SideItem { page: AppShell.History;  icon: "history";     label: "History" }
+        SideItem { page: AppShell.Log;      icon: "list-checks"; label: "Logs" }
+        SideItem { page: AppShell.Settings; icon: "settings";    label: "Settings" }
     }
 }
