@@ -12,7 +12,6 @@ class Node : mpv_node
 {
 public:
     typedef Node *iterator;
-    typedef const Node *const_iterator;
 
     inline Node() noexcept
     {
@@ -79,12 +78,6 @@ public:
         return u.string;
     }
 
-    inline bool operator==(const char *str) const noexcept
-    {
-        assert(format == MPV_FORMAT_STRING);
-        return std::strcmp(u.string, str) == 0;
-    }
-
     inline int size() const noexcept
     {
         assert(format == MPV_FORMAT_NODE_ARRAY);
@@ -108,8 +101,6 @@ public:
         assert(format == MPV_FORMAT_NODE_ARRAY);
         return static_cast<Node *>(&u.list->values[u.list->num]);
     }
-
-
 
     inline const Node &operator[](const char *key) const
     {
@@ -168,22 +159,22 @@ public:
         return mpv_set_option(m_handle, name, MPV_FORMAT_NODE, const_cast<Node*>(&data));
     }
 
-    inline int command_async(const char **args, uint64_t reply_userdata = 0) const noexcept
+    inline int command_async(const char **args) const noexcept
     {
-        return mpv_command_async(m_handle, reply_userdata, args);
+        return mpv_command_async(m_handle, 0, args);
     }
 
-    inline int command(const char **args, uint64_t reply_userdata = 0) const noexcept
+    inline int command(const char **args) const noexcept
     {
         return mpv_command(m_handle, args);
     }
 
-    inline int set_property_async(const char *name, const Node& data, uint64_t reply_userdata = 0) const noexcept
+    inline int set_property_async(const char *name, const Node& data) const noexcept
     {
-        return mpv_set_property_async(m_handle, reply_userdata, name, MPV_FORMAT_NODE, const_cast<Node*>(&data));
+        return mpv_set_property_async(m_handle, 0, name, MPV_FORMAT_NODE, const_cast<Node*>(&data));
     }
 
-    inline int set_property(const char *name, const Node& data, uint64_t reply_userdata = 0) const noexcept
+    inline int set_property(const char *name, const Node& data) const noexcept
     {
         return mpv_set_property(m_handle, name, MPV_FORMAT_NODE, const_cast<Node*>(&data));
     }
@@ -195,10 +186,11 @@ public:
         return tmp;
     }
 
-
-    inline int observe_property(const char *name, uint64_t reply_userdata = 0) const noexcept
+    // `id` comes back as the property-change event's reply_userdata, which is how the caller
+    // tells the properties apart without comparing names.
+    inline int observe_property(uint64_t id, const char *name) const noexcept
     {
-        return mpv_observe_property(m_handle, reply_userdata, name, MPV_FORMAT_NODE);
+        return mpv_observe_property(m_handle, id, name, MPV_FORMAT_NODE);
     }
 
     inline const mpv_event *wait_event(double timeout = 0) const noexcept

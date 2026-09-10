@@ -10,13 +10,13 @@
 #include <QStandardPaths>
 #include <clocale>
 #include <cmath>
+#include <iterator>
 #include <stdexcept>
 #include <limits>
 #include <QStringList>
 #include <QQuickOpenGLUtils>
 #include <QtOpenGL/QOpenGLFramebufferObject>
 #include <QOpenGLFunctions>
-#include <QElapsedTimer>
 #include <QGuiApplication>
 #include <QScreen>
 #include "ui/appshell.h"
@@ -28,6 +28,69 @@ namespace {
 // Idempotent: calling either twice is harmless.
 void keepDisplayAwake() { SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED); }
 void allowDisplaySleep() { SetThreadExecutionState(ES_CONTINUOUS); }
+
+// Handed to observe_property as the reply id, so property-change events come back keyed by
+// enumerator instead of by name.
+enum class Observed : uint64_t {
+    Duration, PlaybackTime, PausedForCache, BaseIdle, Pause, TrackList, GlslShaders,
+    AudioId, SubtitleId, SecondarySubtitleId, SecondarySubtitleText, SubtitleScale,
+    SubtitleDelay, VideoId,
+};
+
+constexpr const char *kObservedProperties[] = {
+    "duration", "playback-time", "paused-for-cache", "base-idle", "pause", "track-list",
+    "glsl-shaders", "aid", "sid", "secondary-sid", "secondary-sub-text", "sub-scale",
+    "sub-delay", "vid",
+};
+static_assert(std::size(kObservedProperties) == size_t(Observed::VideoId) + 1,
+              "kObservedProperties must list every Observed property, in the same order");
+
+// Per-show track selection, stored as one unit-separator string. Fields are only ever appended
+// and every reader falls back to a default, so a string written by an older build still loads.
+struct TrackPrefs {
+    QString subtitleTitle;             // empty for a derived label or a fetched external subtitle
+    QString audioTitle;
+    bool    subtitlesVisible = false;
+    int     videoHeight = -1;
+    int     videoWithinHeight = 0;     // which track of that height, in model order
+    int     audioIndex = -1;
+    QString secondarySubtitleTitle;
+    int     subtitleIndex = -1;        // carries the selection when the label is not a stable key
+    bool    hasSubtitles = false;
+
+    static TrackPrefs parse(const QString &stored) {
+        const QStringList fields = stored.split(QChar(0x1f));
+        auto text = [&](int i) { return fields.value(i); };
+        auto number = [&](int i, int fallback) {
+            bool ok = false;
+            const int value = text(i).toInt(&ok);
+            return ok ? value : fallback;
+        };
+        TrackPrefs prefs;
+        prefs.subtitleTitle          = text(0);
+        prefs.audioTitle             = text(1);
+        prefs.subtitlesVisible       = text(2) == QLatin1String("1");
+        prefs.videoHeight            = number(3, -1);
+        prefs.videoWithinHeight      = number(4, 0);
+        prefs.audioIndex             = number(5, -1);
+        prefs.secondarySubtitleTitle = text(6);
+        prefs.subtitleIndex          = number(7, -1);
+        prefs.hasSubtitles           = fields.size() >= 3;   // a string written before the subtitle fields restores none
+        return prefs;
+    }
+
+    QString toString() const {
+        return QStringList{subtitleTitle,
+                           audioTitle,
+                           subtitlesVisible ? QStringLiteral("1") : QStringLiteral("0"),
+                           QString::number(videoHeight),
+                           QString::number(videoWithinHeight),
+                           QString::number(audioIndex),
+                           secondarySubtitleTitle,
+                           QString::number(subtitleIndex)}
+            .join(QChar(0x1f));
+    }
+};
 }
 
 // Sharing Qt's GL context: a private thread and second context makes the driver sync every shader pass.
@@ -126,20 +189,8 @@ MpvPlayer::MpvPlayer(QQuickItem *parent) : QQuickFramebufferObject(parent) {
     // Let sub-scale also resize ASS/styled subs (sub-font-size alone is ignored for those).
     m_mpv.set_option("sub-ass-override", "scale");
 
-    m_mpv.observe_property("duration");
-    m_mpv.observe_property("playback-time");
-    m_mpv.observe_property("paused-for-cache");
-    m_mpv.observe_property("base-idle");
-    m_mpv.observe_property("pause");
-    m_mpv.observe_property("track-list");
-    m_mpv.observe_property("glsl-shaders");
-    m_mpv.observe_property("aid");
-    m_mpv.observe_property("sid");
-    m_mpv.observe_property("secondary-sid");
-    m_mpv.observe_property("secondary-sub-text");
-    m_mpv.observe_property("sub-scale");
-    m_mpv.observe_property("sub-delay");
-    m_mpv.observe_property("vid");
+    for (size_t i = 0; i < std::size(kObservedProperties); ++i)
+        m_mpv.observe_property(i, kObservedProperties[i]);
     m_mpv.request_log_messages(mpvLogOn ? "info" : "error");
 
     QObject::connect(&Settings::instance(), &Settings::mpvYtdlEnabledChanged, this, [this]() {
@@ -515,9 +566,8 @@ void MpvPlayer::onFileLoaded() {
     applyPendingSeek();
 
     m_videoListModel.clear();
-    // A lone entry is the file mpv already loaded. mpv reports that itself - as one track per HLS
-    // variant, labelled with real resolutions - and the row added here could never bind to any of
-    // those ids, leaving a dead duplicate named after the server.
+    // A lone entry is the file mpv already loaded, and mpv reports that itself - one track per HLS
+    // variant - so the row added here would be a dead duplicate named after the server.
     if (m_videosToBeAdded.count() > 1) {
         m_videoListModel.append(m_videosToBeAdded[0].url,
                                 m_videosToBeAdded[0].title,
@@ -615,112 +665,142 @@ void MpvPlayer::onPropertyChange(const mpv_event *event) {
     auto *prop = static_cast<mpv_event_property *>(event->data);
     if (prop->data == nullptr) return;
 
-    const Mpv::Node &propValue = *static_cast<Mpv::Node *>(prop->data);
-    if (propValue.type() == MPV_FORMAT_NONE) return;
+    const Mpv::Node &value = *static_cast<Mpv::Node *>(prop->data);
+    if (value.type() == MPV_FORMAT_NONE) return;
 
-    if (strcmp(prop->name, "playback-time") == 0) {
-        int64_t newTime = static_cast<double>(propValue);
-        if (newTime == m_time.load(std::memory_order_relaxed)) return;
-        m_time.store(newTime, std::memory_order_relaxed);
-        emit timeChanged();
+    // No default: the compiler is what catches a newly observed property with no handler.
+    switch (static_cast<Observed>(event->reply_userdata)) {
+    case Observed::PlaybackTime:
+        onPlaybackTime(static_cast<int64_t>(static_cast<double>(value)));
+        break;
 
-        int64_t curTime = newTime;
-        int64_t curDuration = m_duration.load(std::memory_order_relaxed);
-        const int64_t edLen = hasED() ? m_aniEDLength : m_EDLength;
-        const bool edWindow = edLen > 0 && edLen < curDuration && curTime > curDuration - edLen;
-        // curDuration is 0 for live/duration-less streams, where this would fire on the first tick.
-        if (!m_playNextEmitted && ((curDuration > 0 && curTime >= curDuration) ||
-                (edWindow && (hasED() ? Settings::instance().get(Config::AniSkipAuto) : m_skipED)))) {
-            m_playNextEmitted = true;
-            emit playNext();
-        } else {
-            const int64_t opStart = hasOP() ? m_aniOPStart : m_OPStart;
-            const int64_t opLen   = hasOP() ? m_aniOPLength : m_OPLength;
-            if (opLen > 0 && curTime >= opStart && curTime < opStart + opLen && opStart + opLen <= curDuration
-                    && (hasOP() ? Settings::instance().get(Config::AniSkipAuto) : m_skipOP)) {
-                seek(opStart + opLen, true);
-            }
-        }
-    }
-    else if (strcmp(prop->name, "sub-delay") == 0) {
-        // mpv's z/Z bindings move this too. The type check matters: operator double() asserts.
-        if (propValue.type() == MPV_FORMAT_DOUBLE) {
-            const double v = static_cast<double>(propValue);
-            if (!qFuzzyCompare(m_subDelay + 1.0, v + 1.0)) { m_subDelay = v; emit subDelayChanged(); }
-        }
-    }
-    else if (strcmp(prop->name, "duration") == 0) {
-        m_duration.store(static_cast<int64_t>(static_cast<double>(propValue)), std::memory_order_relaxed);
+    case Observed::Duration:
+        m_duration.store(static_cast<int64_t>(static_cast<double>(value)), std::memory_order_relaxed);
         emit durationChanged();
         applyPendingSeek();
-    }
-    else if (strcmp(prop->name, "pause") == 0) {
-        if (propValue && m_state == Playing) {
+        break;
+
+    case Observed::SubtitleDelay:
+        // mpv's z/Z bindings move this too. The type check matters: operator double() asserts.
+        if (value.type() == MPV_FORMAT_DOUBLE) {
+            const double delay = static_cast<double>(value);
+            if (!qFuzzyCompare(m_subDelay + 1.0, delay + 1.0)) {
+                m_subDelay = delay;
+                emit subDelayChanged();
+            }
+        }
+        break;
+
+    case Observed::Pause:
+        if (value && m_state == Playing) {
             m_state = Paused;
             allowDisplaySleep();
-        } else if (!propValue && m_state == Paused) {
+        } else if (!value && m_state == Paused) {
             m_state = Playing;
             keepDisplayAwake();
         }
         emit mpvStateChanged();
-    }
-    else if (strcmp(prop->name, "paused-for-cache") == 0) {
-        if (propValue && m_state != Stopped)
-            showText("Network is slow...");
-    }
-    else if (strcmp(prop->name, "base-idle") == 0) {
-        if (propValue && m_state == Playing)
-            showText("Pausing...");
-    }
-    else if (strcmp(prop->name, "aid") == 0) {
-        if (propValue.type() == MPV_FORMAT_INT64)
-            m_audioListModel.setCurrentId(static_cast<int64_t>(propValue));
-    }
-    else if (strcmp(prop->name, "sid") == 0) {
-        const qint64 id = propValue.type() == MPV_FORMAT_INT64 ? static_cast<int64_t>(propValue) : 0;
+        break;
+
+    case Observed::PausedForCache:
+        if (value && m_state != Stopped) showText("Network is slow...");
+        break;
+
+    case Observed::BaseIdle:
+        if (value && m_state == Playing) showText("Pausing...");
+        break;
+
+    case Observed::AudioId:
+        if (value.type() == MPV_FORMAT_INT64)
+            m_audioListModel.setCurrentId(static_cast<int64_t>(value));
+        break;
+
+    case Observed::VideoId:
+        if (value.type() == MPV_FORMAT_INT64)
+            m_videoListModel.setCurrentId(static_cast<int64_t>(value));
+        break;
+
+    case Observed::SubtitleId: {
+        const qint64 id = value.type() == MPV_FORMAT_INT64 ? static_cast<int64_t>(value) : 0;
         if (id != 0) m_subtitleListModel.setCurrentId(id);
-        else m_subtitleListModel.setCurrentIndex(-1);
+        else         m_subtitleListModel.setCurrentIndex(-1);
         if (m_primarySubId != id) { m_primarySubId = id; emit primarySubIdChanged(); applySubLayout(); }
+        break;
     }
-    else if (strcmp(prop->name, "secondary-sub-text") == 0) {
-        const QString text = propValue.type() == MPV_FORMAT_STRING ? QString(propValue) : QString();
+
+    case Observed::SecondarySubtitleId: {
+        const qint64 id = value.type() == MPV_FORMAT_INT64 ? static_cast<int64_t>(value) : 0;
+        m_subtitleListModel.setSecondaryIndex(id != 0 ? m_subtitleListModel.indexForId(id) : -1);
+        if (m_secondarySubId != id) { m_secondarySubId = id; emit secondarySubIdChanged(); applySubLayout(); }
+        break;
+    }
+
+    case Observed::SecondarySubtitleText: {
+        const QString text = value.type() == MPV_FORMAT_STRING ? QString(value) : QString();
         if (const int lines = text.isEmpty() ? 0 : text.count(QChar(0x0a)) + 1; lines != m_secondarySubLines) {
             m_secondarySubLines = lines;
             applySubLayout();
         }
+        break;
     }
-    else if (strcmp(prop->name, "sub-scale") == 0) {
-        if (propValue.type() == MPV_FORMAT_DOUBLE) {
-            m_subScale = double(propValue);
+
+    case Observed::SubtitleScale:
+        if (value.type() == MPV_FORMAT_DOUBLE) {
+            m_subScale = double(value);
             applySubLayout();
         }
-    }
-    else if (strcmp(prop->name, "secondary-sid") == 0) {
-        const qint64 id = propValue.type() == MPV_FORMAT_INT64 ? static_cast<int64_t>(propValue) : 0;
-        m_subtitleListModel.setSecondaryIndex(id != 0 ? m_subtitleListModel.indexForId(id) : -1);
-        if (m_secondarySubId != id) { m_secondarySubId = id; emit secondarySubIdChanged(); applySubLayout(); }
-    }
-    else if (strcmp(prop->name, "vid") == 0) {
-        if (propValue.type() == MPV_FORMAT_INT64)
-            m_videoListModel.setCurrentId(static_cast<int64_t>(propValue));
-    }
-    else if (strcmp(prop->name, "track-list") == 0) {
-        parseTrackList(propValue);
-    }
-    else if (strcmp(prop->name, "glsl-shaders") == 0) {
+        break;
+
+    case Observed::TrackList:
+        parseTrackList(value);
+        break;
+
+    case Observed::GlslShaders: {
         bool clamp = false;
-        if (propValue.type() == MPV_FORMAT_NODE_ARRAY) {
-            for (int i = 0; i < propValue.size() && !clamp; ++i) {
-                const Mpv::Node &s = propValue[i];
-                if (s.type() == MPV_FORMAT_STRING)
-                    clamp = strstr(static_cast<const char *>(s), "AutoDownscalePre") != nullptr;
+        if (value.type() == MPV_FORMAT_NODE_ARRAY) {
+            for (int i = 0; i < value.size() && !clamp; ++i) {
+                const Mpv::Node &shader = value[i];
+                if (shader.type() == MPV_FORMAT_STRING)
+                    clamp = strstr(static_cast<const char *>(shader), "AutoDownscalePre") != nullptr;
             }
         }
         if (clamp != m_bandClamp.load(std::memory_order_relaxed)) {
             m_bandClamp.store(clamp, std::memory_order_relaxed);
             update();
         }
+        break;
     }
+    }
+}
+
+void MpvPlayer::onPlaybackTime(int64_t time) {
+    if (time == m_time.load(std::memory_order_relaxed)) return;
+    m_time.store(time, std::memory_order_relaxed);
+    emit timeChanged();
+    applyAutoSkip(time);
+}
+
+// AniSkip's marks win wherever it found any, and each side has its own switch. The settings
+// reads stay behind the window checks: this runs about once a second for the whole file.
+void MpvPlayer::applyAutoSkip(int64_t time) {
+    const int64_t duration = m_duration.load(std::memory_order_relaxed);
+
+    const int64_t edLength = hasED() ? m_aniEDLength : m_EDLength;
+    const bool inOutro = edLength > 0 && edLength < duration && time > duration - edLength;
+    // duration is 0 for live/duration-less streams, where this would fire on the first tick.
+    if (!m_playNextEmitted
+        && ((duration > 0 && time >= duration)
+            || (inOutro && (hasED() ? Settings::instance().aniskipAuto() : m_skipED)))) {
+        m_playNextEmitted = true;
+        emit playNext();
+        return;
+    }
+
+    const int64_t opStart = hasOP() ? m_aniOPStart : m_OPStart;
+    const int64_t opEnd   = opStart + (hasOP() ? m_aniOPLength : m_OPLength);
+    if (opEnd > opStart && time >= opStart && time < opEnd && opEnd <= duration
+        && (hasOP() ? Settings::instance().aniskipAuto() : m_skipOP))
+        seek(opEnd, true);
 }
 
 // A native path, whose drive letter QUrl reads as a scheme - external tracks then keep a stale id.
@@ -886,12 +966,8 @@ void MpvPlayer::parseTrackList(const Mpv::Node &trackList) {
             if (!url.isEmpty())
                 listModel->setId(url, id);
 
-            listModel->setStats(id, static_cast<int>(h), fps, static_cast<int>(bitrate));
-
             // mpv names an untitled sidecar after the part of its filename the video does not
-            // share - "srt" for Clip.srt, "eng.srt" for Clip.eng.srt. The extension carries no
-            // meaning, so drop it; a title that was only the extension leaves nothing, and the
-            // label then falls back to the filename and stays refreshable.
+            // share - "srt" for Clip.srt, "eng.srt" for Clip.eng.srt - so the extension is noise.
             if (!url.isEmpty() && !title.isEmpty()) {
                 const QString suffix =
                     QFileInfo(url.isLocalFile() ? url.toLocalFile() : url.path()).suffix();
@@ -907,14 +983,13 @@ void MpvPlayer::parseTrackList(const Mpv::Node &trackList) {
             const bool derived = title.isEmpty();   // nothing authoritative to preserve
             const QString label = trackLabel(info);
 
-            const int row = listModel->indexForId(id);
-            if (row < 0) {
+            if (listModel->indexForId(id) < 0)
                 listModel->append(id, label, lang, derived);
-                listModel->setStats(id, static_cast<int>(h), fps, static_cast<int>(bitrate));
-            } else if (!listModel->hasFinalTitle(id)) {
+            else if (!listModel->hasFinalTitle(id))
                 // Derived: refresh it, since mpv may have measured the bitrate since.
                 listModel->updateById(id, label, derived);
-            }
+
+            listModel->setStats(id, static_cast<int>(h), fps, static_cast<int>(bitrate));
 
         } catch (const std::exception &e) {
             logRaw() << "MPV" << e.what();
@@ -1154,43 +1229,40 @@ void MpvPlayer::setSubPos(int pos) {
 void MpvPlayer::saveTrackPrefs() {
     if (m_applyingTrackPrefs || m_showKey.isEmpty()) return;
     const QString key = QStringLiteral("tracks/") + m_showKey;
-    const QStringList saved = Settings::instance().value(key).toString().split(QChar(0x1f));
-    // A fetched subtitle is not in the track model; its empty title would wipe the saved one.
-    // A derived label is not a key either - it changes as mpv measures the stream - so it is
-    // stored empty and the index below carries the selection.
-    auto subTitle = [&](int field, int index, qint64 id) {
-        if (!pathForSubId(id).isEmpty()) return saved.value(field);
+    const TrackPrefs stored = TrackPrefs::parse(Settings::instance().value(key).toString());
+
+    // A fetched subtitle is not in the track model, and a derived label changes as mpv measures
+    // the stream - neither is a stable key, so the title is stored empty and the index carries it.
+    auto subtitleTitle = [&](const QString &keptWhenExternal, int index, qint64 id) {
+        if (!pathForSubId(id).isEmpty()) return keptWhenExternal;
         const Track *track = m_subtitleListModel.at(index);
         if (!track) return QString();
         return m_subtitleListModel.isDerivedTitle(m_subtitleListModel.idForIndex(index))
                    ? QString() : track->title;
     };
-    const int audIdx = m_audioListModel.currentIndex();
-    const Track *aud = m_audioListModel.at(audIdx);
-    const QString audTitle =
-        (aud && !m_audioListModel.isDerivedTitle(m_audioListModel.idForIndex(audIdx)))
-            ? aud->title : QString();
+
+    const int audioIndex = m_audioListModel.currentIndex();
+    const Track *audio = m_audioListModel.at(audioIndex);
+    const bool audioTitled = audio && !m_audioListModel.isDerivedTitle(m_audioListModel.idForIndex(audioIndex));
 
     const QList<int> heights = m_videoListModel.heights();
-    int vidIdx = m_videoListModel.currentIndex();
-    int vidRes = (vidIdx >= 0 && vidIdx < heights.size()) ? heights[vidIdx] : -1;
-    int vidWithin = 0;
-    for (int i = 0; i < vidIdx && i < heights.size(); ++i)
-        if (heights[i] == vidRes) vidWithin++;
+    const int videoIndex = m_videoListModel.currentIndex();
+    const int videoHeight = (videoIndex >= 0 && videoIndex < heights.size()) ? heights[videoIndex] : -1;
+    int videoWithinHeight = 0;
+    for (int i = 0; i < videoIndex && i < heights.size(); ++i)
+        if (heights[i] == videoHeight) videoWithinHeight++;
 
-    const QStringList parts = {
-        subTitle(0, m_subtitleListModel.currentIndex(), m_primarySubId),
-        audTitle,
-        m_subVisible ? QStringLiteral("1") : QStringLiteral("0"),
-        QString::number(vidRes),
-        QString::number(vidWithin),
-        QString::number(audIdx),
-        subTitle(6, m_subtitleListModel.secondaryIndex(), m_secondarySubId),
-        // Field 7: the subtitle's index, so an untitled track still restores. Readers guard on
-        // size, so appending stays compatible with strings written by older builds.
-        QString::number(m_subtitleListModel.currentIndex()),
-    };
-    Settings::instance().setValue(key, parts.join(QChar(0x1f)));
+    TrackPrefs prefs;
+    prefs.subtitleTitle = subtitleTitle(stored.subtitleTitle, m_subtitleListModel.currentIndex(), m_primarySubId);
+    prefs.audioTitle = audioTitled ? audio->title : QString();
+    prefs.subtitlesVisible = m_subVisible;
+    prefs.videoHeight = videoHeight;
+    prefs.videoWithinHeight = videoWithinHeight;
+    prefs.audioIndex = audioIndex;
+    prefs.secondarySubtitleTitle =
+        subtitleTitle(stored.secondarySubtitleTitle, m_subtitleListModel.secondaryIndex(), m_secondarySubId);
+    prefs.subtitleIndex = m_subtitleListModel.currentIndex();
+    Settings::instance().setValue(key, prefs.toString());
 }
 
 int MpvPlayer::pickVideoForPrefs(int savedRes, int savedWithin) const {
@@ -1229,54 +1301,50 @@ void MpvPlayer::restoreTrackPrefs() {
     }
 
     if (m_showKey.isEmpty() || (m_subRestored && m_videoPrefApplied && m_audioPrefApplied)) return;
-    const QString pref = Settings::instance().value("tracks/" + m_showKey).toString();
-    if (pref.isEmpty()) { m_subRestored = m_videoPrefApplied = m_audioPrefApplied = true; return; }
-    const QStringList p = pref.split(QChar(0x1f));
+    const QString stored = Settings::instance().value("tracks/" + m_showKey).toString();
+    if (stored.isEmpty()) { m_subRestored = m_videoPrefApplied = m_audioPrefApplied = true; return; }
+    const TrackPrefs prefs = TrackPrefs::parse(stored);
 
     if (!m_videoPrefApplied) {
-        int target = (p.size() >= 5) ? pickVideoForPrefs(p[3].toInt(), p[4].toInt()) : -1;
+        const int target = pickVideoForPrefs(prefs.videoHeight, prefs.videoWithinHeight);
         if (target < 0 || m_videoListModel.currentIndex() == target) {
             m_videoPrefApplied = true;
-        } else {
-            int64_t id = m_videoListModel.idForIndex(target);
-            if (id > 0) m_mpv.set_property_async("vid", id);
+        } else if (const int64_t id = m_videoListModel.idForIndex(target); id > 0) {
+            m_mpv.set_property_async("vid", id);
         }
     }
 
     if (!m_audioPrefApplied) {
-        int target = (p.size() >= 6) ? pickAudioForPrefs(p[1], p[5].toInt())
-                   : (p.size() >= 2) ? pickAudioForPrefs(p[1], -1) : -1;
+        const int target = pickAudioForPrefs(prefs.audioTitle, prefs.audioIndex);
         if (target < 0 || m_audioListModel.currentIndex() == target) {
             m_audioPrefApplied = true;
-        } else {
-            int64_t id = m_audioListModel.idForIndex(target);
-            if (id > 0) m_mpv.set_property_async("aid", id);
+        } else if (const int64_t id = m_audioListModel.idForIndex(target); id > 0) {
+            m_mpv.set_property_async("aid", id);
         }
     }
 
-    if (!m_subRestored && p.size() >= 3) {
-        m_applyingTrackPrefs = true;
-        bool subFound = false;
-        if (!p[0].isEmpty()) {
-            for (int i = 0; i < m_subtitleListModel.count(); ++i)
-                if (m_subtitleListModel.at(i)->title == p[0]) { setSubIndex(i); subFound = true; break; }
-        } else if (p.size() >= 8) {
-            // No title to match on, so the index is the selection.
-            const int idx = p[7].toInt();
-            if (idx >= 0 && idx < m_subtitleListModel.count()) { setSubIndex(idx); }
-            subFound = true;
-        } else {
-            subFound = true;   // nothing was saved
-        }
-        if (p.size() >= 7 && !p[6].isEmpty())
-            for (int i = 0; i < m_subtitleListModel.count(); ++i)
-                if (m_subtitleListModel.at(i)->title == p[6]) { setSecondarySub(m_subtitleListModel.idForIndex(i)); break; }
-        setSubVisible(p[2] == "1");
-        m_applyingTrackPrefs = false;
-        if (subFound) m_subRestored = true;
-    } else if (p.size() < 3) {
-        m_subRestored = true;
+    if (m_subRestored) return;
+    if (!prefs.hasSubtitles) { m_subRestored = true; return; }
+
+    m_applyingTrackPrefs = true;
+    bool found = true;
+    if (!prefs.subtitleTitle.isEmpty()) {
+        found = false;
+        for (int i = 0; i < m_subtitleListModel.count(); ++i)
+            if (m_subtitleListModel.at(i)->title == prefs.subtitleTitle) { setSubIndex(i); found = true; break; }
+    } else if (prefs.subtitleIndex >= 0 && prefs.subtitleIndex < m_subtitleListModel.count()) {
+        // No title to match on, so the index is the selection.
+        setSubIndex(prefs.subtitleIndex);
     }
+    if (!prefs.secondarySubtitleTitle.isEmpty())
+        for (int i = 0; i < m_subtitleListModel.count(); ++i)
+            if (m_subtitleListModel.at(i)->title == prefs.secondarySubtitleTitle) {
+                setSecondarySub(m_subtitleListModel.idForIndex(i));
+                break;
+            }
+    setSubVisible(prefs.subtitlesVisible);
+    m_applyingTrackPrefs = false;
+    if (found) m_subRestored = true;
 }
 
 void MpvPlayer::setVideoIndex(int index) {

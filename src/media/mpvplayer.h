@@ -233,6 +233,8 @@ private:
     TrackListModel *videoList()    { return &m_videoListModel;    }
 
     Q_INVOKABLE void onMpvEvent();
+    void onPlaybackTime(int64_t time);
+    void applyAutoSkip(int64_t time);
     void onStartFile();
     void onFileLoaded();
     void onEndFile(const mpv_event *event);
