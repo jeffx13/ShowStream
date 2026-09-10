@@ -25,7 +25,7 @@ public:
     ~Playlist();
 
     QSharedPointer<PlaylistItem> root() const { return m_root; }
-    QSharedPointer<PlaylistItem> find(const QString &link);
+    QSharedPointer<PlaylistItem> find(const QString &link) const;
     int count() const { return m_root->count(); }
 
     bool isPlaying(const QString &link) const;
@@ -131,11 +131,13 @@ private:
 
     void onPlayFinished();
     bool tryPlay(const QSharedPointer<PlaylistItem> &item);
-    PlayInfo resolvePlayback(const QSharedPointer<PlaylistItem> &item);
+    // The token is passed down rather than read off the member: a worker that read m_cancel
+    // would see whichever token a newer play had already installed.
+    PlayInfo resolvePlayback(const QSharedPointer<PlaylistItem> &item, const CancelToken &cancel);
     QSharedPointer<PlaylistItem> resolveToPlayableItem(QSharedPointer<PlaylistItem> item);
-    PlayInfo loadPlayInfo(const QSharedPointer<PlaylistItem> &item);
+    PlayInfo loadPlayInfo(const QSharedPointer<PlaylistItem> &item, const CancelToken &cancel);
     PlayInfo loadPastedPlayInfo(const QSharedPointer<PlaylistItem> &item);
-    PlayInfo loadOnlinePlayInfo(const QSharedPointer<PlaylistItem> &item);
+    PlayInfo loadOnlinePlayInfo(const QSharedPointer<PlaylistItem> &item, const CancelToken &cancel);
     PlayInfo loadLocalPlayInfo(const QSharedPointer<PlaylistItem> &item);
     void finalizePlayback(const QSharedPointer<PlaylistItem> &item);
     void setCurrentItem(const QSharedPointer<PlaylistItem> &currentItem);

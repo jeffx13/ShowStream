@@ -72,23 +72,27 @@ void ShowDetails::setShow(const ShowData &show, const ShowData::WatchState &watc
         if (navigate) AppShell::instance().navigateTo(AppShell::Page::Info);
         return;
     }
-    m_watcher.setFuture(QtConcurrent::run(&ShowDetails::load, this, show, watchState, navigate));
+    // Fresh, not reset(): a reset would un-cancel the load this one supersedes and let its
+    // queued result overwrite the show.
+    m_cancel = CancelToken{};
+    m_watcher.setFuture(QtConcurrent::run(&ShowDetails::load, this, show, watchState, navigate, m_cancel));
 }
 
 void ShowDetails::reload(const ShowData &show, const ShowData::WatchState &watchState) {
     if (m_watcher.isRunning()) return;
-    m_watcher.setFuture(QtConcurrent::run(&ShowDetails::load, this, show, watchState, false));
+    m_cancel = CancelToken{};
+    m_watcher.setFuture(QtConcurrent::run(&ShowDetails::load, this, show, watchState, false, m_cancel));
 }
 
 void ShowDetails::onLoadFinished() {
-    m_cancel.reset();
     if (!m_hasPending) return;
     m_hasPending = false;
     setShow(m_pendingShow, m_pendingInfo, m_pendingNavigate);
 }
 
-// Worker thread; the arguments are by-value copies.
-void ShowDetails::load(ShowData show, ShowData::WatchState watchState, bool navigate) {
+// Worker thread; the arguments are by-value copies, the token included - a superseded load
+// must not test whichever token the load that replaced it has since installed.
+void ShowDetails::load(ShowData show, ShowData::WatchState watchState, bool navigate, CancelToken cancel) {
     auto list = watchState.playlist;
     const bool usingExistingPlaylist = (list != nullptr);
 
@@ -96,7 +100,7 @@ void ShowDetails::load(ShowData show, ShowData::WatchState watchState, bool navi
     if (show.provider) {
         logInfo() << show.provider->name() << "Loading" << show.title << "using" << show.link;
         try {
-            Client client(m_cancel);
+            Client client(cancel);
             success = show.provider->loadShow(&client, show);
         } catch (const std::exception &ex) {
             AppShell::instance().reportError(QString::fromUtf8(ex.what()), show.provider->name() + " Error");
@@ -105,7 +109,7 @@ void ShowDetails::load(ShowData show, ShowData::WatchState watchState, bool navi
         }
     }
 
-    if (!success || m_cancel.isCancelled()) {
+    if (!success || cancel.isCancelled()) {
         if (!success) {
             // A provider returning false (rather than throwing) otherwise looks like a dead click.
             logWarn() << "ShowDetails" << "Failed to load" << show.title;
@@ -114,7 +118,7 @@ void ShowDetails::load(ShowData show, ShowData::WatchState watchState, bool navi
                 AppShell::instance().reportError("Could not load " + title + ".", "Show Error");
             }, Qt::QueuedConnection);
         }
-        return;  // onLoadFinished (watcher) resets the token + clears isLoading
+        return;
     }
 
     if (!list)
@@ -133,12 +137,12 @@ void ShowDetails::load(ShowData show, ShowData::WatchState watchState, bool navi
 
     logInfo() << "ShowDetails" << "Loaded" << show.title;
 
-    QMetaObject::invokeMethod(this, [this, show = std::move(show), list, shouldReverse, navigate]() {
+    QMetaObject::invokeMethod(this, [this, show = std::move(show), list, shouldReverse, navigate, cancel]() {
         // A newer request arrived - drop this stale result.
-        if (m_cancel.isCancelled()) return;
+        if (cancel.isCancelled()) return;
         m_show = show;
         m_episodes.setPlaylist(list);
-        // Unconditional: only setting it kept the previous show's order on an unwatched one.
+        // Unconditional: setting it only when true keeps the previous show's order.
         m_episodes.setReversed(shouldReverse);
         updateContinueEpisode();
         if (navigate) AppShell::instance().navigateTo(AppShell::Page::Info);

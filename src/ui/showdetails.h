@@ -71,7 +71,7 @@ public:
 private:
     EpisodeListModel *episodes() { return &m_episodes; }
     void updateContinueEpisode();
-    void load(ShowData show, ShowData::WatchState watchState, bool navigate);
+    void load(ShowData show, ShowData::WatchState watchState, bool navigate, CancelToken cancel);
     void onLoadFinished();
 
     ShowData                 m_show;

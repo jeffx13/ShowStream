@@ -9,6 +9,9 @@ public:
     CancelToken() : m_flag(std::make_shared<std::atomic<bool>>(false)) {}
 
     void cancel() const { m_flag->store(true,  std::memory_order_relaxed); }
+
+    // Only safe once nothing can still be watching this token: it un-cancels every copy, including
+    // one a worker still winding down holds. To supersede work, assign a fresh CancelToken instead.
     void reset()  const { m_flag->store(false, std::memory_order_relaxed); }
 
     bool isCancelled() const {

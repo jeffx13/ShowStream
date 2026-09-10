@@ -32,8 +32,13 @@ SkipTimes::SkipTimes(QObject *parent) : QObject(parent) {}
 SkipTimes::~SkipTimes() {
     m_searchCancel.cancel();
     m_skipCancel.cancel();
-    waitFor(m_searchWatcher, "SkipTimes AniList search");
-    waitFor(m_skipWatcher,   "SkipTimes AniSkip query");
+    for (QFuture<void> &future : m_pending)
+        waitFor(future, "SkipTimes query");
+}
+
+void SkipTimes::track(QFuture<void> future) {
+    m_pending.removeIf([](const QFuture<void> &f) { return f.isFinished(); });
+    m_pending.append(std::move(future));
 }
 
 bool SkipTimes::aniskipEnabled() const {
@@ -206,7 +211,7 @@ void SkipTimes::runSearch() {
     const QString query = m_searchQuery, showLink = m_showLink;
     const int preferMal = m_malIdCache.value(showLink, 0);
 
-    m_searchWatcher.setFuture(QtConcurrent::run([this, query, preferMal, cancel = m_searchCancel]() {
+    track(QtConcurrent::run([this, query, preferMal, cancel = m_searchCancel]() {
         Client client(cancel, false);
         auto list = searchCandidates(client, query);
         if (cancel.isCancelled()) return;
@@ -302,7 +307,7 @@ void SkipTimes::queryAniSkip() {
     m_skipCancel = CancelToken{};
 
     const int episode = m_selectedEpisodeIndex, duration = m_duration;
-    m_skipWatcher.setFuture(QtConcurrent::run([this, malId, episode, duration, cancel = m_skipCancel]() {
+    track(QtConcurrent::run([this, malId, episode, duration, cancel = m_skipCancel]() {
         Client client(cancel, false);
         const QString url = QString("https://api.aniskip.com/v2/skip-times/%1/%2?types=op&types=ed&episodeLength=%3")
                                 .arg(malId).arg(episode).arg(duration);

@@ -3,7 +3,7 @@
 #include <QHash>
 #include <QList>
 #include <QStringList>
-#include <QFutureWatcher>
+#include <QFuture>
 #include "net/canceltoken.h"
 #include <qqmlintegration.h>
 
@@ -78,6 +78,10 @@ private:
     int  currentMalId() const;
     bool aniskipEnabled() const;
 
+    // Superseding a search abandons its future, so every one is kept until it finishes -
+    // the destructor has to wait on all of them, not just the newest.
+    void track(QFuture<void> future);
+
     void loadProfile(const QString &showLink);
     void saveProfile();
     void loadFallback();
@@ -105,6 +109,5 @@ private:
     QHash<QString, int> m_malIdCache;   // showLink -> chosen MAL id
     CancelToken m_searchCancel;
     CancelToken m_skipCancel;
-    QFutureWatcher<void> m_searchWatcher;
-    QFutureWatcher<void> m_skipWatcher;
+    QList<QFuture<void>> m_pending;
 };
