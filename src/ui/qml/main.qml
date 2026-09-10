@@ -33,7 +33,7 @@ ApplicationWindow {
     Binding { target: Theme; property: "customAccent"; value: App.settings.accentColor }
     Binding { target: Globals; property: "uiScale";    value: App.settings.uiScale }
 
-    // Sidebar order, which is what Ctrl+Tab follows - stepping the page numbers put History last.
+    // Sidebar order, which is what Ctrl+Tab follows - the page numbers would put History last.
     readonly property var navOrder: [
         AppShell.Search, AppShell.Info, AppShell.Library, AppShell.Player,
         AppShell.Download, AppShell.History, AppShell.Log, AppShell.Settings
@@ -368,10 +368,13 @@ ApplicationWindow {
         }
     }
 
+    // Above every other item, chrome included, so nothing of the app shows through.
     Image {
-        id: debugOverlay
+        id: bossScreen
         anchors.fill: parent
+        z: 1000
         visible: false
+        fillMode: Image.PreserveAspectCrop
         source: "qrc:/AoNami/resources/images/periodic-table.jpg"
     }
 
@@ -408,7 +411,7 @@ ApplicationWindow {
             if (Globals.pipMode) root.togglePip()
             if (Globals.maximised) root.toggleMaximised()
             if (Globals.fullscreen) root.toggleFullscreen()
-            debugOverlay.visible = true
+            bossScreen.visible = true
             root.lower()
             root.showMinimized()
             if (Globals.mpv) Globals.mpv.pause()
@@ -416,6 +419,6 @@ ApplicationWindow {
     }
     Shortcut {
         sequence: "Ctrl+Space"
-        onActivated: debugOverlay.visible = !debugOverlay.visible
+        onActivated: bossScreen.visible = !bossScreen.visible
     }
 }
