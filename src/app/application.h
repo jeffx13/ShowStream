@@ -77,8 +77,7 @@ private:
 
     void loadResult(SearchResults &src, int index);
     void appendResult(SearchResults &src, int index, bool play);
-    void openEntry(const QString &title, const QString &link, const QString &cover,
-                   const QString &providerName, ShowData::WatchState watch, bool autoResume);
+    void openEntry(const LibraryEntry &entry, bool autoResume);
 
     // Destroyed last, so it outlives the models below whose workers are still in provider calls.
     ProviderList        m_providers{this};

@@ -34,6 +34,14 @@ public:
     int totalEpisodes = 0;
     int showType = 0;            // ShowData::ShowType
     bool valid = false;
+
+    ShowData::WatchState watchState() const {
+        ShowData::WatchState watch;
+        watch.libraryType      = libraryType;
+        watch.lastWatchedIndex = lastWatchedIndex;
+        watch.progress         = progress;
+        return watch;
+    }
 };
 
 class Library : public QAbstractListModel
@@ -57,7 +65,6 @@ public:
     Q_INVOKABLE int  count(int libraryType = -1) const;
     Q_INVOKABLE int  libraryTypeOf(const QString &link) const;
     bool linkExists(const QString &link) const;
-    ShowData::WatchState watchState(const QString &showLink) const;
 
     Q_INVOKABLE LibraryEntry entryAt(int index) const;
     LibraryEntry entryForLink(const QString &link) const;
@@ -77,13 +84,8 @@ public:
     void cacheHistoryMeta(const QString &link, const QString &title, const QString &cover,
                           const QString &provider, int total);
 
-    struct HistoryRow {
-        QString link, title, cover, provider;
-        int lastWatchedIndex = -1, totalEpisodes = 0;
-        double progress = 0.0;
-        bool valid = false;
-    };
-    HistoryRow historyEntry(const QString &link) const;
+    // libraryType stays -1: history rows exist independently of the library.
+    LibraryEntry historyEntry(const QString &link) const;
 
     // Keyed by absolute path, most recent first - the caller reopens on the first row still on disk.
     QList<QPair<QString, double>> localFolderProgress(const QString &folder) const;

@@ -9,7 +9,6 @@
 #include "app/exception.h"
 #include <QDir>
 #include <QCoreApplication>
-#include <QGuiApplication>
 #include <QVariant>
 #include <QDateTime>
 #include <algorithm>
@@ -149,19 +148,6 @@ void Library::initDatabase() {
         return;
     }
 
-    query.exec("ALTER TABLE shows ADD COLUMN show_type INTEGER DEFAULT 0");
-
-    auto hasColumn = [this](const QString &table, const QString &column) {
-        QSqlQuery cols(m_db);
-        if (!cols.exec("PRAGMA table_info(" + table + ")")) return true;
-        while (cols.next())
-            if (cols.value(1).toString() == column) return true;
-        return false;
-    };
-
-    if (!hasColumn("shows", "progress"))
-        query.exec("ALTER TABLE shows ADD COLUMN progress REAL DEFAULT 0");
-
     // Watch history is independent of the library so shows you never add still get tracked.
     query.exec(R"(
         CREATE TABLE IF NOT EXISTS history (
@@ -176,31 +162,6 @@ void Library::initDatabase() {
         )
     )");
 
-    if (!hasColumn("history", "progress"))
-        query.exec("ALTER TABLE history ADD COLUMN progress REAL DEFAULT 0");
-
-    // Still holding the column is the once-only guard; those values were seconds. Reset only
-    // once the drop has cleared it - hasColumn reports the column present when its PRAGMA
-    // fails, so an unconditional reset wipes every resume position, on every launch.
-    for (const QString &table : {QStringLiteral("shows"), QStringLiteral("history")}) {
-        if (!hasColumn(table, "timestamp")) continue;
-        if (query.exec("ALTER TABLE " + table + " DROP COLUMN timestamp"))
-            query.exec("UPDATE " + table + " SET progress = 0");
-        else
-            logError() << "Library" << "Could not drop" << table << "timestamp:" << query.lastError().text();
-    }
-
-    // Superseded by last_watched_index long ago; nothing has read or written it since.
-    if (hasColumn("shows", "watched_index"))
-        query.exec("ALTER TABLE shows DROP COLUMN watched_index");
-
-    // finished stored progress against whatever the threshold was that day; derived, it follows it.
-    for (const QString &table : {QStringLiteral("shows"), QStringLiteral("history")})
-        if (hasColumn(table, "finished"))
-            query.exec("ALTER TABLE " + table + " DROP COLUMN finished");
-
-    query.exec("CREATE INDEX IF NOT EXISTS idx_shows_library ON shows(library_type, sort_order)");
-
     // Kept out of shows/history: those rows are provider-backed, and HistoryPage would try to
     // reopen a file path through a provider that does not exist.
     query.exec(R"(
@@ -211,6 +172,8 @@ void Library::initDatabase() {
             last_played_at INTEGER DEFAULT 0
         )
     )");
+
+    query.exec("CREATE INDEX IF NOT EXISTS idx_shows_library ON shows(library_type, sort_order)");
     query.exec("CREATE INDEX IF NOT EXISTS idx_local_progress_folder "
                "ON local_progress(folder, last_played_at)");
 
@@ -448,7 +411,7 @@ void Library::move(int from, int to) {
     if (from == to || from < 0 || to < 0) return;
     if (from >= m_displayCache.size() || to >= m_displayCache.size()) return;
 
-    // Persist first: a failed write used to leave the cache reordered and the DB untouched.
+    // Persist first: a failed write must not leave the cache reordered and the DB untouched.
     QList<LibraryEntry> reordered = m_displayCache;
     reordered.move(from, to);
 
@@ -570,8 +533,8 @@ void Library::removeFromHistory(const QString &link) {
     emit historyChanged();
 }
 
-Library::HistoryRow Library::historyEntry(const QString &link) const {
-    HistoryRow e;
+LibraryEntry Library::historyEntry(const QString &link) const {
+    LibraryEntry e;
     QSqlQuery q = prepared(m_db, "SELECT title, cover, provider, last_watched_index, "
                                  "total_episodes, progress FROM history WHERE link = ?", {link});
     if (q.exec() && q.next()) {
@@ -595,18 +558,6 @@ void Library::updateShowCover(const QString &link, const QString &cover) {
         m_displayCache[idx].cover = cover;
         emit dataChanged(index(idx), index(idx));
     }
-}
-
-ShowData::WatchState Library::watchState(const QString &showLink) const {
-    ShowData::WatchState watch;
-    QSqlQuery query = prepared(m_db, "SELECT library_type, last_watched_index, progress "
-                                     "FROM shows WHERE link = ?", {showLink});
-    if (query.exec() && query.next()) {
-        watch.libraryType = query.value(0).toInt();
-        watch.lastWatchedIndex = query.value(1).toInt();
-        watch.progress = query.value(2).toDouble();
-    }
-    return watch;
 }
 
 LibraryEntry Library::entryAt(int index) const {
