@@ -27,7 +27,6 @@ set(ZLIB_INCLUDE_DIR "${MSYS2_ROOT}/include"        CACHE PATH "" FORCE)
 set(ZLIB_LIBRARY     "${MSYS2_ROOT}/lib/libz.dll.a" CACHE FILEPATH "" FORCE)
 find_package(ZLIB REQUIRED)
 
-# Project setup
 qt_standard_project_setup()
 qt_policy(SET QTP0004 NEW)
 
@@ -47,7 +46,6 @@ list(APPEND BINS
     "${MSYS2_ROOT}/bin/zlib1.dll"
 )
 
-# Executable
 qt_add_executable(${PROJECT_NAME} src/main.cpp aonami.rc)
 set_target_properties(${PROJECT_NAME} PROPERTIES WIN32_EXECUTABLE TRUE)
 target_compile_definitions(${PROJECT_NAME} PRIVATE APP_VERSION="${PROJECT_VERSION}")
@@ -81,7 +79,6 @@ target_link_libraries(${PROJECT_NAME} PUBLIC
 )
 target_link_libraries(${PROJECT_NAME} PRIVATE bcrypt dbghelp psapi)  # CNG + crash minidumps
 
-# QML Module
 set_source_files_properties(src/ui/qml/Globals.qml src/ui/qml/Theme.qml
     PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 

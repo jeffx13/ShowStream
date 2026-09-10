@@ -15,7 +15,7 @@
 namespace {
 
 // A separate stack from Client's, so the clearance and UA are applied here too, or posters 403.
-class RefererNam : public QNetworkAccessManager {
+class ImageAccessManager : public QNetworkAccessManager {
 public:
     using QNetworkAccessManager::QNetworkAccessManager;
 
@@ -40,10 +40,10 @@ protected:
     }
 };
 
-class ImageFactory : public QQmlNetworkAccessManagerFactory {
+class ImageAccessManagerFactory : public QQmlNetworkAccessManagerFactory {
 public:
     QNetworkAccessManager *create(QObject *parent) override {
-        auto *manager = new RefererNam(parent);
+        auto *manager = new ImageAccessManager(parent);
         manager->setCookieJar(new Cloudflare::ProxyCookieJar(manager));
 
         const QString cacheDir = QStandardPaths::writableLocation(QStandardPaths::CacheLocation) + "/httpcache";
@@ -74,7 +74,6 @@ int main(int argc, char *argv[]) {
     // Threaded render loop (Qt defaults to the basic single-thread loop on Windows+GL).
     qputenv("QSG_RENDER_LOOP", "threaded");
 
-    // Probably redundant now mpv shares the scene graph's context, but the failure mode is a black video.
     QGuiApplication::setAttribute(Qt::AA_ShareOpenGLContexts);
 
     QQuickWindow::setGraphicsApi(QSGRendererInterface::OpenGLRhi);
@@ -88,7 +87,7 @@ int main(int argc, char *argv[]) {
 
     QQmlApplicationEngine engine;
     engine.addImportPath("qrc:/AoNami/src/ui/qml");
-    engine.setNetworkAccessManagerFactory(new ImageFactory);
+    engine.setNetworkAccessManagerFactory(new ImageAccessManagerFactory);
 
     const QUrl url(QStringLiteral("qrc:/AoNami/src/ui/qml/main.qml"));
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreated,

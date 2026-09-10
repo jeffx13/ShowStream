@@ -2,15 +2,9 @@
 #include <QSharedPointer>
 #include <QWeakPointer>
 #include <QEnableSharedFromThis>
-#include <QScopedPointer>
-#include <QFile>
-#include <QRegularExpression>
-#include <QUrl>
-#include <QHash>
+#include <QString>
 
 class ShowProvider;
-class Video;
-class Playlist;
 
 class PlaylistItem : public QEnableSharedFromThis<PlaylistItem> {
 public:
@@ -52,7 +46,6 @@ public:
     void insert(int index, QSharedPointer<PlaylistItem> value);
     void removeAt(int index);
     void removeOne(const QSharedPointer<PlaylistItem> &value);
-    void reserve(int n) { m_children.reserve(n); }
     void clear();
     void sort();
 

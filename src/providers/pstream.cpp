@@ -6,7 +6,6 @@
 #include <QJsonArray>
 #include <QThread>
 #include <QtConcurrent/QtConcurrentRun>
-#include <QUrlQuery>
 
 
 namespace {

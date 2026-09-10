@@ -92,7 +92,6 @@ void Settings::clearHistory(const QString &key) {
     m_settings.sync();
 }
 
-// download/dir has a runtime default and is validated, so it stays off the Config::Key path.
 QString Settings::downloadDir() const {
     return m_settings.value(kDownloadDirKey,
                             QStandardPaths::writableLocation(QStandardPaths::DownloadLocation)).toString();

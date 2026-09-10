@@ -81,7 +81,6 @@ QStringList DownloadTask::ffmpegArguments() const {
     args << "-i" << link;
     if (!headerBlock.isEmpty()) args << "-headers" << headerBlock;
     args << "-i" << audioLink;
-    // Local files, so no -headers for these inputs.
     for (const SubtitleFile &sub : subtitleFiles)
         args << "-i" << QDir::toNativeSeparators(sub.path);
 
@@ -152,9 +151,8 @@ QString DownloadTask::extractLinkInner() {
 
 namespace {
 
-// Sniffed, never trusted from the url: a 200 carrying an HTML error page would otherwise reach
-// the muxer. Matching a real timecode rather than a bare "-->" is what rejects that page, since
-// every HTML comment ends in one.
+// Sniffed, never trusted from the url. Every HTML comment ends in "-->", so a bare "-->" check
+// would let an error page served as a 200 reach the muxer; match a real timecode instead.
 QString sniffSubtitleExtension(const QByteArray &data) {
     const QByteArray head = data.left(4096);
     if (head.startsWith("WEBVTT"))      return QStringLiteral(".vtt");

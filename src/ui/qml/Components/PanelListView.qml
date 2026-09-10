@@ -11,11 +11,7 @@ ListView {
     boundsBehavior: Flickable.StopAtBounds
     spacing: 2
 
-    ScrollBar.vertical: ScrollBar {
-        policy: ScrollBar.AsNeeded
-        width: 4
-        contentItem: Rectangle { color: Theme.accent; radius: 2; opacity: 0.4 }
-    }
+    ScrollBar.vertical: AppScrollBar { width: 4; barOpacity: 0.4; showTrack: false }
 
     Text {
         anchors.centerIn: parent

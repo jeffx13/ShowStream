@@ -178,8 +178,8 @@ ServerSelector::Result ServerSelector::findWorkingServer(Client *client, ShowPro
         int best = -1;
         for (int i = 0; i < servers.size(); ++i) {
             if (hasPreferredLang && servers[i].translation != want) continue;
-            if (servers[i].resolution() == 0) continue;
-            if (best < 0 || servers[i].resolution() > servers[best].resolution()) best = i;
+            if (servers[i].resolution == 0) continue;
+            if (best < 0 || servers[i].resolution > servers[best].resolution) best = i;
         }
         if (best >= 0) preferred = servers[best].name;
     }

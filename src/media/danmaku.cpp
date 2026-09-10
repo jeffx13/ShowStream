@@ -5,7 +5,6 @@
 #include <QMutex>
 #include <QSaveFile>
 #include <QSet>
-#include <QtMath>
 
 #include <algorithm>
 

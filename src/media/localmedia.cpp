@@ -79,9 +79,8 @@ bool loadFolder(const QUrl &pathUrl, const QSharedPointer<PlaylistItem> &playlis
 
     if (fileEntries.isEmpty() && dirEntries.isEmpty()) return false;
 
-    // Resume points live in library.db. clear() above dropped the children but kept the old
-    // index, which now points at nothing; only an explicitly opened file pins one here, and
-    // Playlist applies the stored positions once the tree is built and sorted.
+    // Resume points live in library.db, and Playlist applies them once the tree is built and
+    // sorted; clear() above left the old index pointing at nothing.
     playlist->setCurrentIndex(-1);
     const QString requestedFile = (!pathInfo.isDir() && fileEntries.contains(pathInfo))
                                       ? pathInfo.absoluteFilePath() : QString();

@@ -38,7 +38,9 @@ public:
         endResetModel();
     }
 
-    int rowCount(const QModelIndex & = {}) const override { return m_entries.size(); }
+    int rowCount(const QModelIndex &parent = {}) const override {
+        return parent.isValid() ? 0 : m_entries.size();
+    }
 
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override {
         if (index.row() < 0 || index.row() >= m_entries.size()) return {};

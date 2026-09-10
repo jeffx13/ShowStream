@@ -15,7 +15,6 @@ class EpisodeListModel : public QAbstractListModel {
 
 public:
     explicit EpisodeListModel(QObject *parent = nullptr) : QAbstractListModel(parent) {}
-    ~EpisodeListModel() = default;
 
     void setPlaylist(const QSharedPointer<PlaylistItem> &playlist);
     bool isReversed() const { return m_isReversed; }
@@ -37,6 +36,7 @@ private:
     QString m_filterText;
     QVector<int> m_filteredIndices; // source indices of matching episodes (forward order)
 
+    int  visibleCount() const;
     void rebuildFilteredIndices();
 
     enum {

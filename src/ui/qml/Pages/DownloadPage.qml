@@ -132,14 +132,14 @@ Item {
 
             AppButton {
                 text: qsTr("Pause all"); fontSize: 20; radius: 6
-                backgroundDefaultColor: Theme.surfaceAlt; contentItemTextColor: Theme.textPrimary
+                secondary: true
                 enabled: taskList.count > 0; opacity: enabled ? 1.0 : 0.45
                 Layout.preferredHeight: 34; leftPadding: 18; rightPadding: 18
                 onClicked: App.downloads.pauseAll()
             }
             AppButton {
                 text: qsTr("Resume all"); fontSize: 20; radius: 6
-                backgroundDefaultColor: Theme.surfaceAlt; contentItemTextColor: Theme.textPrimary
+                secondary: true
                 enabled: taskList.count > 0; opacity: enabled ? 1.0 : 0.45
                 Layout.preferredHeight: 34; leftPadding: 18; rightPadding: 18
                 onClicked: App.downloads.resumeAll()

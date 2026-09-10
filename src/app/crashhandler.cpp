@@ -9,7 +9,6 @@
 #include "ui/appshell.h"
 
 #include <QCoreApplication>
-#include <QDateTime>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
@@ -229,7 +228,6 @@ void CrashHandler::reportPending() {
     if (reports.isEmpty()) return;
 
     const QFileInfo &latest = reports.first();
-    // Without this the same crash is announced on every launch until 20 newer ones push it out.
     static const QString kSeenKey = QStringLiteral("crash/lastReported");
     Settings &settings = Settings::instance();
     if (settings.value(kSeenKey).toString() == latest.fileName()) return;

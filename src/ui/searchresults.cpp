@@ -134,6 +134,6 @@ void SearchResults::fetchMore() {
 void SearchResults::reload() {
     if (m_watcher.isRunning() || !m_lastSearch) return;
     m_cancel.reset();
-    m_currentPage = 1;   // the pages after 1 append, so reloading from page N duplicated them
+    m_currentPage = 1;   // pages after 1 append, so reloading from page N would duplicate them
     m_watcher.setFuture(QtConcurrent::run(m_lastSearch));
 }

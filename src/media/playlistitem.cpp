@@ -1,6 +1,5 @@
 #include "media/playlistitem.h"
 #include <QtGlobal>
-#include <QFileInfo>
 #include <cmath>
 #include <algorithm>
 
@@ -23,7 +22,6 @@ PlaylistItem::PlaylistItem(int seasonNumber, float number, const QString &link, 
     } else {
         displayName = name.isEmpty() ? "[Unnamed Episode]" : name;
     }
-    m_row = -1;
 }
 
 PlaylistItem::~PlaylistItem() {
@@ -97,7 +95,6 @@ int PlaylistItem::indexOf(const QString &link) const {
 }
 
 bool PlaylistItem::isValidIndex(int index) const {
-    if (m_children.isEmpty()) return false;
     return index >= 0 && index < m_children.size();
 }
 

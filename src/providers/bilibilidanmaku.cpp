@@ -1,8 +1,6 @@
 #include "providers/bilibilidanmaku.h"
 #include "app/logger.h"
 
-#include <QUrl>
-#include <QUrlQuery>
 #include <QtConcurrent/QtConcurrentRun>
 
 // Minimal protobuf reader for DmSegMobileReply; unknown fields skip by wiretype, not number.

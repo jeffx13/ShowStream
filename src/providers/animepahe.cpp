@@ -187,7 +187,7 @@ QList<VideoServer> AnimePahe::loadServers(Client *client, const PlaylistItem *ep
         QString kwik = button.attr("data-src");
         if (kwik.isEmpty()) continue;
         if (kwik.startsWith("//")) kwik = "https:" + kwik;
-        else if (kwik.startsWith('/')) kwik = "https://kwik.cx" + kwik;   // fallback
+        else if (kwik.startsWith('/')) kwik = "https://kwik.cx" + kwik;
         servers.emplaceBack("Kwik " + button.text().simplified(), kwik);
     }
     return servers;

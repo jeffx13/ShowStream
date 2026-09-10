@@ -96,8 +96,7 @@ Popup {
             AppButton {
                 text: qsTr("View Logs")
                 visible: notifier.isError
-                backgroundDefaultColor: Theme.surfaceAlt
-                contentItemTextColor: Theme.textPrimary
+                secondary: true
                 fontSize: 20
                 onClicked: { notifier.close(); notifier.logsRequested() }
             }

@@ -52,7 +52,7 @@ AppPopup {
         const q = searchField.text.trim()
         if (q.length === 0) return
         resultsView.currentIndex = -1
-        App.searchOnProvider(providerCombo.currentText, q, 1)
+        App.searchOnProvider(providerCombo.currentText, q)
     }
 
     onOpened: searchField.forceActiveFocus()

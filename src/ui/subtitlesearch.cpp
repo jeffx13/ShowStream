@@ -221,7 +221,7 @@ void SubtitleSearch::searchIfNew(const QString &query) {
 }
 
 void SubtitleSearch::cancel() {
-    m_cancel.cancel();   // covers a fetch too, which isLoading no longer reports
+    m_cancel.cancel();   // covers a fetch too, which isLoading does not report
 }
 
 namespace {

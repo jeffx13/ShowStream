@@ -5,8 +5,10 @@ import ".."
 Button {
     id: btn
 
-    property color backgroundDefaultColor: Theme.accent
-    property color contentItemTextColor: Theme.onColor(backgroundDefaultColor)
+    property bool  secondary: false
+    property color backgroundDefaultColor: secondary ? Theme.surfaceAlt : Theme.accent
+    property color contentItemTextColor: secondary ? Theme.textPrimary
+                                                   : Theme.onColor(backgroundDefaultColor)
     property int   fontSize: 20
     property alias radius: bg.radius
 

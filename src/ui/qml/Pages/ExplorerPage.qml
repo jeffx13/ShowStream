@@ -13,6 +13,27 @@ Item {
     // Browse mode for the toolbar's active-state highlight: 0 Latest, 1 Popular, 2 Search.
     property int browseMode: 0
 
+    // The search field owns the focus in this toolbar; nothing else may take it.
+    component ToolbarButton: AppButton {
+        fontSize: 20
+        radius: 10
+        focusPolicy: Qt.NoFocus
+        focus: false
+        activeFocusOnTab: false
+        Layout.fillHeight: true
+        leftPadding: 16
+        rightPadding: 16
+    }
+
+    component ToolbarComboBox: AppComboBox {
+        fontSize: 20
+        focus: false
+        activeFocusOnTab: false
+        Layout.fillWidth: true
+        Layout.fillHeight: true
+        Layout.preferredWidth: 2
+    }
+
     function search() {
         let q = searchTextField.text.trim()
         if (q.length > 0)
@@ -205,75 +226,37 @@ Item {
                 }
             }
 
-            AppButton {
+            ToolbarButton {
                 text: "Search"
-                fontSize: 20
-                radius: 10
-                focusPolicy: Qt.NoFocus
-                focus: false
-                activeFocusOnTab: false
-                Layout.fillHeight: true
-                leftPadding: 16
-                rightPadding: 16
                 onClicked: explorerPage.search()
             }
 
-            AppButton {
+            ToolbarButton {
                 text: "Latest"
-                radius: 10
                 backgroundDefaultColor: explorerPage.browseMode === 0 ? Theme.accent : Theme.border
-                focusPolicy: Qt.NoFocus
-                focus: false
-                activeFocusOnTab: false
-                Layout.fillHeight: true
-                leftPadding: 16
-                rightPadding: 16
                 onClicked: { explorerPage.forceActiveFocus(); explorerPage.browseMode = 0; App.browse(true) }
             }
 
-            AppButton {
+            ToolbarButton {
                 text: "Popular"
-                radius: 10
                 backgroundDefaultColor: explorerPage.browseMode === 1 ? Theme.accent : Theme.border
-                focusPolicy: Qt.NoFocus
-                focus: false
-                activeFocusOnTab: false
-                Layout.fillHeight: true
-                leftPadding: 16
-                rightPadding: 16
                 onClicked: { explorerPage.forceActiveFocus(); explorerPage.browseMode = 1; App.browse(false) }
             }
 
-            AppComboBox {
+            ToolbarComboBox {
                 id: providerComboBox
                 text: "text"
-                fontSize: 20
                 model: App.providers
-                focus: false
                 currentIndex: App.providers.currentIndex
-                activeFocusOnTab: false
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredWidth: 2
-                onActivated: (index) => {
-                    App.providers.currentIndex = index
-                }
+                onActivated: (index) => App.providers.currentIndex = index
             }
 
-            AppComboBox {
+            ToolbarComboBox {
                 text: ""
-                fontSize: 20
-                focus: false
                 model: App.providers.showTypes
                 currentIndex: App.providers.currentTypeIndex
                 currentIndexColor: Qt.alpha(Theme.accent, 0.25)
-                activeFocusOnTab: false
-                Layout.fillWidth: true
-                Layout.fillHeight: true
-                Layout.preferredWidth: 2
-                onActivated: (index) => {
-                    App.providers.currentTypeIndex = index
-                }
+                onActivated: (index) => App.providers.currentTypeIndex = index
             }
         }
     }

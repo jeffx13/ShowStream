@@ -62,7 +62,6 @@ public:
     static QString iniPath();
     static QString appDir() { return QCoreApplication::applicationDirPath(); }
 
-    // For keys with no Config::Key: window geometry, per-show track prefs, ...
     Q_INVOKABLE QVariant value(const QString &key, const QVariant &defaultValue = {}) const {
         return m_settings.value(key, defaultValue);
     }
@@ -208,7 +207,6 @@ private:
     // Danmaku extraction runs off the GUI thread, where QSettings must not be touched.
     void syncDanmakuOptions() const;
     void applyProxySettings(const QString &proxyString);
-    // Coalesce disk flushes from frequent setters (e.g. volume/speed slider drags).
     void scheduleSync();
 
     Settings();

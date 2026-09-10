@@ -249,15 +249,12 @@ Rectangle {
             required property bool isDeletable
             required property string link
             required property bool isWatched
-            required property real number
             required property TreeView treeView
             required property bool isTreeNode
             required property bool expanded
             required property bool hasChildren
             required property int depth
             required property int row
-            required property int column
-            required property bool current
             required property bool selected
             required property var index
 

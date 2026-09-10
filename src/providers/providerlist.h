@@ -14,8 +14,8 @@ class ProviderList : public QAbstractListModel
     Q_PROPERTY(QVariant showTypes        READ showTypes                                  NOTIFY currentIndexChanged)
 public:
     explicit ProviderList(QObject *parent = nullptr) : QAbstractListModel(parent) {}
-    ~ProviderList() { qDeleteAll(m_providers); }
 
+    // Takes ownership: each provider is reparented here.
     void setProviders(QList<ShowProvider *> &&providers);
 
     Q_INVOKABLE void cycle();

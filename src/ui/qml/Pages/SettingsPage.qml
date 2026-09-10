@@ -123,7 +123,7 @@ Page {
                     Rectangle { Layout.preferredWidth: 28; Layout.preferredHeight: 28; radius: 6; color: Theme.accent; border.color: Theme.border; border.width: 1 }
                     Item { Layout.fillWidth: true }
                     AppButton { text: qsTr("Change"); onClicked: { accentDialog.selectedColor = Theme.accent; accentDialog.open() } }
-                    AppButton { text: qsTr("Reset"); backgroundDefaultColor: Theme.surfaceAlt; contentItemTextColor: Theme.textPrimary; onClicked: App.settings.accentColor = "" }
+                    AppButton { text: qsTr("Reset"); secondary: true; onClicked: App.settings.accentColor = "" }
                 }
 
                 LabeledSlider {
@@ -163,7 +163,7 @@ Page {
                         onEditingFinished: App.settings.proxy = text
                     }
                     AppButton { text: qsTr("Apply"); onClicked: App.settings.proxy = proxyField.text }
-                    AppButton { text: qsTr("Clear"); backgroundDefaultColor: Theme.surfaceAlt; contentItemTextColor: Theme.textPrimary; onClicked: { proxyField.text = ""; App.settings.proxy = "" } }
+                    AppButton { text: qsTr("Clear"); secondary: true; onClicked: { proxyField.text = ""; App.settings.proxy = "" } }
                 }
             }
 
@@ -192,9 +192,9 @@ Page {
 
                 Flow {
                     Layout.fillWidth: true; spacing: 6
-                    AppButton { text: qsTr("mpv folder"); backgroundDefaultColor: Theme.surfaceAlt; contentItemTextColor: Theme.textPrimary; onClicked: Qt.openUrlExternally("file:///" + App.settings.appDir + "/mpv") }
-                    AppButton { text: qsTr("mpv.conf"); backgroundDefaultColor: Theme.surfaceAlt; contentItemTextColor: Theme.textPrimary; onClicked: Qt.openUrlExternally("file:///" + App.settings.appDir + "/mpv/mpv.conf") }
-                    AppButton { text: qsTr("settings.ini"); backgroundDefaultColor: Theme.surfaceAlt; contentItemTextColor: Theme.textPrimary; onClicked: Qt.openUrlExternally(App.settings.path) }
+                    AppButton { text: qsTr("mpv folder"); secondary: true; onClicked: Qt.openUrlExternally("file:///" + App.settings.appDir + "/mpv") }
+                    AppButton { text: qsTr("mpv.conf"); secondary: true; onClicked: Qt.openUrlExternally("file:///" + App.settings.appDir + "/mpv/mpv.conf") }
+                    AppButton { text: qsTr("settings.ini"); secondary: true; onClicked: Qt.openUrlExternally(App.settings.path) }
                 }
             }
 
@@ -288,8 +288,7 @@ Page {
                     Layout.fillWidth: true; spacing: 6
                     AppButton {
                         text: qsTr("Reset Appearance")
-                        backgroundDefaultColor: Theme.surfaceAlt
-                        contentItemTextColor: Theme.textPrimary
+                        secondary: true
                         onClicked: App.settings.resetDanmakuAppearance()
                     }
                 }

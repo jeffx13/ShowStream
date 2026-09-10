@@ -1,7 +1,6 @@
 #pragma once
 #include <QAbstractListModel>
 #include <QFutureWatcher>
-#include <QVariantMap>
 #include "app/async.h"
 #include "net/client.h"
 #include "providers/showdata.h"

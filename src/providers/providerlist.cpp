@@ -5,8 +5,10 @@ void ProviderList::setProviders(QList<ShowProvider *> &&providers) {
     beginResetModel();
     m_providers = std::move(providers);
     s_byName.clear();
-    for (ShowProvider *provider : std::as_const(m_providers))
-        if (provider) s_byName.insert(provider->name(), provider);
+    for (ShowProvider *provider : std::as_const(m_providers)) {
+        provider->setParent(this);
+        s_byName.insert(provider->name(), provider);
+    }
     m_index = -1;
     m_typeIndex = 0;
     m_current = nullptr;
@@ -46,14 +48,13 @@ void ProviderList::cycle() {
 }
 
 int ProviderList::rowCount(const QModelIndex &parent) const {
-    return m_providers.size();
+    return parent.isValid() ? 0 : m_providers.size();
 }
 
 QVariant ProviderList::data(const QModelIndex &index, int role) const {
     if (role != NameRole || index.row() < 0 || index.row() >= m_providers.size())
         return {};
-    ShowProvider *provider = m_providers.at(index.row());
-    return provider ? provider->name() : QVariant();
+    return m_providers.at(index.row())->name();
 }
 
 QHash<int, QByteArray> ProviderList::roleNames() const {

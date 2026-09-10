@@ -4,7 +4,6 @@
 #include "app/settings.h"
 #include "media/playlistitem.h"
 #include <QLocale>
-#include <QUrlQuery>
 
 
 
@@ -280,7 +279,7 @@ PlayInfo Bilibili::extractSource(Client *client, VideoServer server) {
                 playInfo.audios.emplaceBack(url, Track::formatBitrate(bw), "", bw);
         }
 
-        // Video (sorted best-first by Bilibili)
+        // Bilibili sorts these best-first.
         for (const auto &v : dash["video"].toArray()) {
             auto vid = v.toObject();
             int h = vid["height"].toInt();

@@ -35,7 +35,6 @@ void EpisodeListModel::rebuildFilteredIndices() {
     for (int i = 0; i < count; i++) {
         auto ep = playlist->at(i);
         if (!ep) continue;
-        // Match the title OR the episode number (e.g. typing "1166" finds E1166).
         const double n = ep->number;
         const QString numStr = (std::floor(n) == n)
             ? QString::number(static_cast<long long>(n))
@@ -46,55 +45,37 @@ void EpisodeListModel::rebuildFilteredIndices() {
     }
 }
 
-int EpisodeListModel::sourceIndex(int visibleRow) const {
-    auto playlist = m_playlist.toStrongRef();
-    if (!playlist) return visibleRow;
-    if (!m_filterText.isEmpty()) {
-        int fi = m_isReversed ? m_filteredIndices.size() - 1 - visibleRow : visibleRow;
-        return (fi >= 0 && fi < m_filteredIndices.size()) ? m_filteredIndices[fi] : -1;
-    }
-    int total = playlist->count();
-    return m_isReversed ? total - 1 - visibleRow : visibleRow;
-}
-
-int EpisodeListModel::visibleIndex(int sourceIdx) const {
-    if (sourceIdx < 0) return -1;
-    auto playlist = m_playlist.toStrongRef();
-    if (!playlist) return sourceIdx;
-    if (!m_filterText.isEmpty()) {
-        int fi = m_filteredIndices.indexOf(sourceIdx);
-        if (fi < 0) return -1;
-        return m_isReversed ? m_filteredIndices.size() - 1 - fi : fi;
-    }
-    int total = playlist->count();
-    return m_isReversed ? total - 1 - sourceIdx : sourceIdx;
-}
-
-int EpisodeListModel::rowCount(const QModelIndex &parent) const {
-    if (parent.isValid() || m_playlist.isNull()) return 0;
+int EpisodeListModel::visibleCount() const {
     if (!m_filterText.isEmpty()) return m_filteredIndices.size();
     auto playlist = m_playlist.toStrongRef();
     return playlist ? playlist->count() : 0;
 }
 
+int EpisodeListModel::sourceIndex(int visibleRow) const {
+    const int total = visibleCount();
+    const int row = m_isReversed ? total - 1 - visibleRow : visibleRow;
+    if (row < 0 || row >= total) return -1;
+    return m_filterText.isEmpty() ? row : m_filteredIndices.at(row);
+}
+
+int EpisodeListModel::visibleIndex(int sourceIdx) const {
+    if (sourceIdx < 0) return -1;
+    const int total = visibleCount();
+    int row = sourceIdx;
+    if (!m_filterText.isEmpty())
+        row = m_filteredIndices.indexOf(sourceIdx);
+    if (row < 0 || row >= total) return -1;
+    return m_isReversed ? total - 1 - row : row;
+}
+
+int EpisodeListModel::rowCount(const QModelIndex &parent) const {
+    return parent.isValid() ? 0 : visibleCount();
+}
+
 QVariant EpisodeListModel::data(const QModelIndex &index, int role) const {
-    if (!index.isValid() || m_playlist.isNull()) return {};
     auto playlist = m_playlist.toStrongRef();
     if (!playlist) return {};
-
-    const int count = rowCount();
-    if (index.row() >= count) return {};
-
-    int i;
-    if (!m_filterText.isEmpty()) {
-        int fi = m_isReversed ? m_filteredIndices.size() - 1 - index.row() : index.row();
-        i = m_filteredIndices[fi];
-    } else {
-        int total = playlist->count();
-        i = m_isReversed ? total - index.row() - 1 : index.row();
-    }
-
-    auto episode = playlist->at(i);
+    auto episode = playlist->at(sourceIndex(index.row()));
     if (!episode) return {};
 
     switch (role) {

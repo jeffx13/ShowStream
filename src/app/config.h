@@ -14,10 +14,10 @@ inline const Key<double>  Speed       {"player/speed", 1.0};
 inline const Key<bool>    Ytdl        {"player/ytdl", false};
 inline const Key<int>     SubFontSize {"player/subFontSize", 40};
 inline const Key<int>     SubPos      {"player/subPos", 100};
-inline const Key<bool>    PreferDub   {"player/preferDub", false};  // false = prefer subbed
+inline const Key<bool>    PreferDub   {"player/preferDub", false};
 inline const Key<bool>    AniSkip     {"player/aniskip", true};
 inline const Key<bool>    AniSkipAuto {"player/aniskipAuto", false};
-inline const Key<int>     WatchedPercent {"player/watchedPercent", 80};  // %
+inline const Key<int>     WatchedPercent {"player/watchedPercent", 80};
 
 inline const Key<bool>    DanmakuEnabled     {"danmaku/enabled", true};
 inline const Key<int>     DanmakuOpacity     {"danmaku/opacity", 80};        // %
@@ -36,7 +36,6 @@ inline const Key<bool>    DanmakuBlockBottom {"danmaku/blockBottom", false};
 inline const Key<bool>    DanmakuBlockColour {"danmaku/blockColour", false}; // force coloured comments to white
 inline const Key<bool>    DanmakuBlockRepeat {"danmaku/blockRepeat", true};
 
-// Used when a show has no saved skip profile.
 inline const Key<int>     SkipOPStart  {"skip/fallbackOPStart", 0};
 inline const Key<int>     SkipOPLength {"skip/fallbackOPLength", 90};
 inline const Key<int>     SkipEDLength {"skip/fallbackEDLength", 90};
@@ -52,7 +51,6 @@ inline const Key<bool>    LimitCache    {"network/limit_cache", false};
 inline const Key<qint64>  ForwardCache  {"network/forward_cache", 0};
 inline const Key<qint64>  BackwardCache {"network/backward_cache", 0};
 
-// download/dir has a runtime default - see Settings::downloadDir
 inline const Key<QString> MaxSpeed      {"download/maxSpeed", QString()};
 
 inline const Key<QString> SubdlApiKey {"subtitles/subdlApiKey",
@@ -67,7 +65,6 @@ inline QString skipProfile(const QString &showLink) {
     return QStringLiteral("skip/") + QString::number(qHash(showLink));
 }
 
-// Per episode, not per show: another episode's file would load with the wrong timings.
 inline QString episodeSub(const QString &episodeLink) {
     return QStringLiteral("subtitles/ep") + QString::number(qHash(episodeLink));
 }

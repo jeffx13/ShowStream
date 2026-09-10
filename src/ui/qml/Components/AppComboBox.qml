@@ -13,9 +13,8 @@ ComboBox {
 
     textRole: comboBox.text && comboBox.text.length > 0 ? comboBox.text : ""
 
-    // Deliberately reads index/model/modelData from the delegate context rather than declaring them
-    // required: this one delegate serves ListModels with roles, QStringLists and plain JS arrays,
-    // and the required-property form resolves differently for each.
+    // Reads index/model/modelData from the delegate context rather than declaring them required:
+    // one delegate serves ListModels, QStringLists and JS arrays, which resolve differently.
     delegate: ItemDelegate {
         id: itemDel
         width: comboBox.width

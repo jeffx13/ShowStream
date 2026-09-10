@@ -20,9 +20,6 @@ public:
     enum Status { Unchecked, Working, Broken };
     Q_ENUM(Status)
 
-    ServerListModel() = default;
-    ~ServerListModel() = default;
-
     void setServers(const QList<VideoServer> &servers, ShowProvider *provider);
     void setCurrentIndex(int index);
     void setCurrentServer(const QString &name);
@@ -46,14 +43,15 @@ signals:
     void countChanged();
 
 private:
-    bool hasDub() const;
-
     int m_currentIndex = -1;
     QList<VideoServer> m_servers;
     ShowProvider *m_provider = nullptr;
+    // The section header asks per row whether any server is dubbed; scanning there is O(n^2).
+    bool m_hasDub = false;
     QHash<QString, PlayInfo> m_sourceCache;
     QSet<QString> m_brokenServers;
 
+    int  indexOfServer(const QString &name) const;
     void emitStatusChanged(const QString &name);
     void resort();
 

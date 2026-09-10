@@ -13,16 +13,16 @@ struct VideoServer {
     QString name;
     QString link;
     Translation translation = Unknown;
-
+    // Read out of the name ("... 1080p" -> 1080); 0 when it just names a host. Cached because
+    // the sorters and the selector compare it across every server on every pass.
+    int resolution = 0;
 
     VideoServer(const QString& name, const QString& link, Translation translation = Unknown)
-        : name(name), link(link), translation(translation) {}
-
-    // Resolution out of the name ("... 1080p" -> 1080); 0 when it just names a host.
-    int resolution() const {
+        : name(name), link(link), translation(translation)
+    {
         static const QRegularExpression re(QStringLiteral("(\\d{3,4})\\s*[pP]"));
-        const auto match = re.match(name);
-        return match.hasMatch() ? match.captured(1).toInt() : 0;
+        if (const auto match = re.match(this->name); match.hasMatch())
+            resolution = match.captured(1).toInt();
     }
 };
 

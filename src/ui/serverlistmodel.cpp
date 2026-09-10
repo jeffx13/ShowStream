@@ -1,7 +1,5 @@
 #include "ui/serverlistmodel.h"
 #include "providers/showprovider.h"
-#include "app/logger.h"
-#include <QThread>
 #include <algorithm>
 
 void ServerListModel::setServers(const QList<VideoServer> &servers, ShowProvider *provider) {
@@ -11,16 +9,11 @@ void ServerListModel::setServers(const QList<VideoServer> &servers, ShowProvider
     m_sourceCache.clear();
     m_brokenServers.clear();
     m_currentIndex = -1;
-    std::stable_sort(m_servers.begin(), m_servers.end(),
-                     [](const VideoServer &a, const VideoServer &b) {
-                         if (a.translation != b.translation) return a.translation < b.translation;
-                         // Best first - alphabetical would put 360p above 720p.
-                         if (a.resolution() != b.resolution()) return a.resolution() > b.resolution();
-                         return a.name < b.name;
-                     });
+    m_hasDub = std::any_of(m_servers.cbegin(), m_servers.cend(),
+                           [](const VideoServer &s) { return s.translation == VideoServer::Dub; });
     endResetModel();
+    resort();
     emit countChanged();
-    emit currentIndexChanged();
 }
 
 void ServerListModel::setCurrentIndex(int index) {
@@ -30,8 +23,7 @@ void ServerListModel::setCurrentIndex(int index) {
 }
 
 void ServerListModel::setCurrentServer(const QString &name) {
-    for (int i = 0; i < m_servers.size(); ++i)
-        if (m_servers[i].name == name) { setCurrentIndex(i); break; }
+    setCurrentIndex(indexOfServer(name));
     if (m_provider && !name.isEmpty()) m_provider->setPreferredServer(name);
 }
 
@@ -44,14 +36,19 @@ void ServerListModel::resort() {
                          const bool bb = m_brokenServers.contains(b.name);
                          if (ab != bb) return !ab;                       // working before broken
                          if (a.translation != b.translation) return a.translation < b.translation;
-                         if (a.resolution() != b.resolution()) return a.resolution() > b.resolution();
+                         // Best first - alphabetical would put 360p above 720p.
+                         if (a.resolution != b.resolution) return a.resolution > b.resolution;
                          return a.name < b.name;
                      });
-    m_currentIndex = -1;
-    for (int i = 0; i < m_servers.size(); ++i)
-        if (m_servers[i].name == currentName) { m_currentIndex = i; break; }
+    m_currentIndex = currentName.isEmpty() ? -1 : indexOfServer(currentName);
     endResetModel();
     emit currentIndexChanged();
+}
+
+int ServerListModel::indexOfServer(const QString &name) const {
+    for (int i = 0; i < m_servers.size(); ++i)
+        if (m_servers[i].name == name) return i;
+    return -1;
 }
 
 void ServerListModel::setPreferredServer(int index) {
@@ -64,17 +61,12 @@ VideoServer &ServerListModel::at(int index) {
     return m_servers[index];
 }
 
-bool ServerListModel::hasDub() const {
-    for (const auto &s : m_servers)
-        if (s.translation == VideoServer::Dub) return true;
-    return false;
-}
-
 void ServerListModel::clear() {
     beginResetModel();
     m_servers.clear();
     m_currentIndex = -1;
     m_provider = nullptr;
+    m_hasDub = false;
     m_sourceCache.clear();
     m_brokenServers.clear();
     endResetModel();
@@ -106,11 +98,8 @@ void ServerListModel::markBroken(const QString &name) {
 }
 
 void ServerListModel::emitStatusChanged(const QString &name) {
-    for (int i = 0; i < m_servers.size(); ++i)
-        if (m_servers[i].name == name) {
-            emit dataChanged(index(i), index(i), {StatusRole});
-            return;
-        }
+    if (const int row = indexOfServer(name); row >= 0)
+        emit dataChanged(index(row), index(row), {StatusRole});
 }
 
 bool ServerListModel::isValidIndex(int index) const {
@@ -118,8 +107,7 @@ bool ServerListModel::isValidIndex(int index) const {
 }
 
 int ServerListModel::rowCount(const QModelIndex &parent) const {
-    Q_UNUSED(parent);
-    return count();
+    return parent.isValid() ? 0 : m_servers.size();
 }
 
 QVariant ServerListModel::data(const QModelIndex &index, int role) const {
@@ -139,7 +127,7 @@ QVariant ServerListModel::data(const QModelIndex &index, int role) const {
         return static_cast<int>(server.translation);
     case SectionRole:
         if (m_brokenServers.contains(server.name)) return QStringLiteral("Broken");
-        if (!hasDub()) return QString();
+        if (!m_hasDub) return QString();
         return server.translation == VideoServer::Dub ? QStringLiteral("Dubbed")
              : server.translation == VideoServer::Sub ? QStringLiteral("Subbed") : QString();
     default:
