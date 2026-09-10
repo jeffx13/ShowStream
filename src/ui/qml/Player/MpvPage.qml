@@ -1,4 +1,5 @@
-﻿import QtQuick
+﻿pragma ComponentBehavior: Bound
+import QtQuick
 import QtQuick.Controls
 import QtQuick.Dialogs
 import "../Components"
@@ -118,10 +119,17 @@ Item {
             visible: false
             onClosed: mpvPage.forceActiveFocus()
 
-            function toggle() {
+            // No tab given (the V/G shortcut) reopens on whichever one was last active.
+            function toggle(tabId) {
                 if (Globals.pipMode) Globals.togglePip()   // panel needs the full window
-                if (opened) close()
-                else { open(); playlistBar.shown = false }
+                const target = tabId ? tabId : playerPanel.activeTabId
+                if (playerPanel.opened && playerPanel.activeTabId === target) {
+                    playerPanel.close()
+                } else {
+                    playerPanel.activeTabId = target
+                    playerPanel.syncActiveTab()
+                    if (!playerPanel.opened) { playerPanel.open(); playlistBar.shown = false }
+                }
                 mpvPage.forceActiveFocus()
             }
         }
@@ -136,79 +144,62 @@ Item {
             height: 64
 
             onPlaylistRequested: playlistBar.toggle()
-            onPanelRequested: playerPanel.toggle()
+            onPanelRequested: (tab) => playerPanel.toggle(tab)
             onOpenFileRequested: folderDialog.open()
+        }
+
+        // Only one is ever active at a time, so they share the bottom-right corner.
+        component SkipPill: Rectangle {
+            id: pill
+            property alias label: pillLabel.text
+            signal activated()
+
+            anchors {
+                right: parent.right
+                bottom: parent.bottom
+                rightMargin: 28
+                bottomMargin: controlBar.visible ? controlBar.height + 18 : 28
+            }
+            width: pillLabel.implicitWidth + 36
+            height: 44
+            radius: 22
+            color: pillArea.containsMouse ? Theme.accent : Theme.overlayScrim
+            border.color: Theme.accent
+            border.width: 1.5
+
+            Text {
+                id: pillLabel
+                anchors.centerIn: parent
+                color: "white"
+                font.pixelSize: Globals.sp(20)
+                font.weight: Font.Medium
+            }
+            MouseArea {
+                id: pillArea
+                anchors.fill: parent
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: pill.activated()
+            }
         }
 
         Item {
             anchors.fill: parent
             z: controlBar.z + 1
 
-            Rectangle {
-                property bool active: mpv.hasOP && !App.settings.aniskipAuto
-                                      && mpv.time >= mpv.aniOPStart
-                                      && mpv.time < mpv.aniOPStart + mpv.aniOPLength
-                anchors {
-                    right: parent.right
-                    bottom: parent.bottom
-                    rightMargin: 28
-                    bottomMargin: controlBar.visible ? controlBar.height + 18 : 28
-                }
-                width: introLabel.implicitWidth + 36
-                height: 44
-                radius: 22
-                color: introArea.containsMouse ? Theme.accent : Theme.overlayScrim
-                border.color: Theme.accent
-                border.width: 1.5
-                visible: active
-                Text {
-                    id: introLabel
-                    anchors.centerIn: parent
-                    text: "Skip Intro"
-                    color: "white"
-                    font.pixelSize: Globals.sp(20)
-                    font.weight: Font.Medium
-                }
-                MouseArea {
-                    id: introArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: { mpv.seek(mpv.aniOPStart + mpv.aniOPLength); mpv.peek() }
-                }
+            SkipPill {
+                label: "Skip Intro"
+                visible: mpv.hasOP && !App.settings.aniskipAuto
+                         && mpv.time >= mpv.aniOPStart
+                         && mpv.time < mpv.aniOPStart + mpv.aniOPLength
+                onActivated: { mpv.seek(mpv.aniOPStart + mpv.aniOPLength); mpv.peek() }
             }
 
-            Rectangle {
-                property bool active: mpv.hasED && !App.settings.aniskipAuto && mpv.duration > 0
-                                      && mpv.time >= mpv.duration - mpv.aniEDLength
-                anchors {
-                    right: parent.right
-                    bottom: parent.bottom
-                    rightMargin: 28
-                    bottomMargin: controlBar.visible ? controlBar.height + 18 : 28
-                }
-                width: nextLabel.implicitWidth + 36
-                height: 44
-                radius: 22
-                color: nextArea.containsMouse ? Theme.accent : Theme.overlayScrim
-                border.color: Theme.accent
-                border.width: 1.5
-                visible: active
-                Text {
-                    id: nextLabel
-                    anchors.centerIn: parent
-                    text: "Next Episode  ▶"
-                    color: "white"
-                    font.pixelSize: Globals.sp(20)
-                    font.weight: Font.Medium
-                }
-                MouseArea {
-                    id: nextArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: App.playlist.stepItem(1)
-                }
+            SkipPill {
+                label: "Next Episode  ▶"
+                visible: mpv.hasED && !App.settings.aniskipAuto && mpv.duration > 0
+                         && mpv.time >= mpv.duration - mpv.aniEDLength
+                onActivated: App.playlist.stepItem(1)
             }
         }
 

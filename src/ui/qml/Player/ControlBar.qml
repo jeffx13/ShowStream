@@ -20,7 +20,7 @@ Item {
     readonly property int volume: player.volume
 
     signal playlistRequested()
-    signal panelRequested()
+    signal panelRequested(string tab)
     signal openFileRequested()
 
     onTimeChanged: if (!timeSlider.pressed) timeSlider.value = time
@@ -55,6 +55,12 @@ Item {
         HoverHandler { id: cbHover }
         MouseArea { id: cbArea; anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: cb.clicked() }
         AppToolTip { text: cb.tip; visible: cb.tip !== "" && cbHover.hovered }
+    }
+
+    component Divider: Rectangle {
+        Layout.preferredWidth: 1; Layout.preferredHeight: 18
+        Layout.leftMargin: 5; Layout.rightMargin: 5
+        color: Theme.overlayFillHover
     }
 
     Timer {
@@ -374,11 +380,7 @@ Item {
                 onClicked: controlBar.player.stop()
             }
 
-            Rectangle {
-                Layout.preferredWidth: 1; Layout.preferredHeight: 18
-                Layout.leftMargin: 5; Layout.rightMargin: 5
-                color: Theme.overlayFillHover
-            }
+            Divider {}
 
             Item {
                 id: volumeArea
@@ -449,7 +451,7 @@ Item {
             CtrlBtn {
                 icon: "server"
                 tip: qsTr("Servers")
-                onClicked: controlBar.panelRequested()
+                onClicked: controlBar.panelRequested("servers")
             }
             CtrlBtn {
                 icon: "list-video"
@@ -457,11 +459,7 @@ Item {
                 onClicked: controlBar.playlistRequested()
             }
 
-            Rectangle {
-                Layout.preferredWidth: 1; Layout.preferredHeight: 18
-                Layout.leftMargin: 5; Layout.rightMargin: 5
-                color: Theme.overlayFillHover
-            }
+            Divider {}
 
             CtrlBtn {
                 icon: "folder"
@@ -471,14 +469,10 @@ Item {
             CtrlBtn {
                 icon: "settings"
                 tip: qsTr("Settings")
-                onClicked: controlBar.panelRequested()
+                onClicked: controlBar.panelRequested("general")
             }
 
-            Rectangle {
-                Layout.preferredWidth: 1; Layout.preferredHeight: 18
-                Layout.leftMargin: 5; Layout.rightMargin: 5
-                color: Theme.overlayFillHover
-            }
+            Divider {}
 
             CtrlBtn {
                 icon: Globals.pipMode ? "picture-in-picture-2" : "picture-in-picture"
